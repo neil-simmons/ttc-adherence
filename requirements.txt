@@ -1,0 +1,12 @@
+streamlit==1.32.0
+pandas==2.2.1
+numpy==1.26.4
+geopandas==0.14.3
+shapely==2.0.3
+plotly==5.20.0
+scipy==1.12.0
+requests==2.31.0
+pyarrow==15.0.1
+keplergl==0.3.2
+streamlit-keplergl==0.2.0
+huggingface-hub==0.21.4
