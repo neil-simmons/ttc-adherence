@@ -1,2 +1,4 @@
 libgdal-dev
 g++
+libspatialindex-dev
+gdal-bin
