@@ -1,5 +1,5 @@
 streamlit
-pandas
+pandas<2.2.0
 numpy<2.0.0
 geopandas
 shapely
@@ -10,3 +10,4 @@ pyarrow
 keplergl
 streamlit-keplergl
 huggingface-hub
+setuptools
