@@ -81,7 +81,7 @@ def get_available_routes(path):
             cleaned_routes.add(r_str)
     return sorted(list(cleaned_routes))
 
-@st.cache_data(max_entries=2, show_spinner="Extracting Route Data via Pushdown Predicate...")
+@st.cache_data(max_entries=1, show_spinner="Extracting Route Data via Pushdown Predicate...")
 def load_route_data(path, selected_route):
     schema = pq.read_schema(path)
     route_id_type = schema.field('route_id').type
@@ -110,11 +110,12 @@ def load_route_data(path, selected_route):
            (df['local_time'].dt.tz_localize(None) <= pd.to_datetime(END_DATE))
     df = df[mask].copy()
     
-    df['hour'] = df['local_time'].dt.hour
-    df['sec_since_midnight'] = df['hour'] * 3600 + df['local_time'].dt.minute * 60 + df['local_time'].dt.second
-    df['op_seconds'] = np.where(df['hour'] < 4, df['sec_since_midnight'] + 86400, df['sec_since_midnight'])
+    # Optmized Downcasting for Memory 
+    df['hour'] = df['local_time'].dt.hour.astype(np.int8)
+    df['sec_since_midnight'] = (df['hour'] * 3600 + df['local_time'].dt.minute * 60 + df['local_time'].dt.second).astype(np.int32)
+    df['op_seconds'] = np.where(df['hour'] < 4, df['sec_since_midnight'] + 86400, df['sec_since_midnight']).astype(np.int32)
     df['op_date'] = np.where(df['hour'] < 4, (df['local_time'] - pd.Timedelta(days=1)).dt.date, df['local_time'].dt.date)
-    df['day_of_week'] = pd.to_datetime(df['op_date']).dt.dayofweek
+    df['day_of_week'] = pd.to_datetime(df['op_date']).dt.dayofweek.astype(np.int8)
     df['is_holiday'] = df['op_date'].astype(str).isin(STAT_HOLIDAYS)
     
     gc.collect() 
@@ -123,33 +124,34 @@ def load_route_data(path, selected_route):
 @st.cache_data(show_spinner="Loading Static GTFS Data...")
 def load_gtfs():
     """
-    OPTIMIZED: This function is a primary target for startup memory optimization.
-    - Uses memory-efficient 'pyarrow' string dtypes.
-    - Converts low-cardinality columns like 'trip_headsign' to 'category' type.
+    OPTIMIZED: Aggressive downcasting and PyArrow backend string typing
+    to prevent memory resets on Streamlit Community Cloud.
     """
     def get_file(filename):
         if os.path.exists(filename): return filename
         return hf_hub_download(repo_id=HF_REPO, filename=filename, repo_type="dataset")
 
-    # Define dtypes for memory efficiency
-    trips_dtype = {
-        'route_id': 'string[pyarrow]',
-        'trip_id': 'string[pyarrow]',
-        'shape_id': 'string[pyarrow]',
-        'trip_headsign': 'category' # Category is highly efficient for repeated text
-    }
-
-    stops = pd.read_csv(get_file(GTFS_STOPS), usecols=['stop_id', 'stop_name', 'stop_lat', 'stop_lon'], dtype=str)
-    trips = pd.read_csv(get_file(GTFS_TRIPS), usecols=['route_id', 'trip_id', 'shape_id', 'trip_headsign'], dtype=trips_dtype)
-    stop_times = pd.read_csv(get_file(GTFS_STOP_TIMES), usecols=['trip_id', 'stop_id', 'arrival_time', 'stop_sequence', 'shape_dist_traveled'], dtype=str)
-    shapes = pd.read_csv(get_file(GTFS_SHAPES), usecols=['shape_id', 'shape_pt_lat', 'shape_pt_lon', 'shape_pt_sequence'], dtype=str)
+    str_dtype = 'string[pyarrow]'
     
-    # Cast numerics
-    stop_times['shape_dist_traveled'] = stop_times['shape_dist_traveled'].astype(float)
-    stop_times['stop_sequence'] = stop_times['stop_sequence'].astype(int)
-    shapes['shape_pt_lat'] = shapes['shape_pt_lat'].astype(float)
-    shapes['shape_pt_lon'] = shapes['shape_pt_lon'].astype(float)
-    shapes['shape_pt_sequence'] = shapes['shape_pt_sequence'].astype(int)
+    stops = pd.read_csv(get_file(GTFS_STOPS), usecols=['stop_id', 'stop_name', 'stop_lat', 'stop_lon'], dtype=str_dtype)
+    
+    trips = pd.read_csv(get_file(GTFS_TRIPS), usecols=['route_id', 'trip_id', 'shape_id', 'trip_headsign'], 
+                        dtype={'route_id': str_dtype, 'trip_id': str_dtype, 'shape_id': str_dtype, 'trip_headsign': 'category'})
+    
+    stop_times = pd.read_csv(get_file(GTFS_STOP_TIMES), 
+                             usecols=['trip_id', 'stop_id', 'arrival_time', 'stop_sequence', 'shape_dist_traveled'], 
+                             dtype={'trip_id': str_dtype, 'stop_id': str_dtype, 'arrival_time': str_dtype})
+                             
+    shapes = pd.read_csv(get_file(GTFS_SHAPES), 
+                         usecols=['shape_id', 'shape_pt_lat', 'shape_pt_lon', 'shape_pt_sequence'], 
+                         dtype={'shape_id': str_dtype})
+    
+    # Cast numerics efficiently
+    stop_times['shape_dist_traveled'] = pd.to_numeric(stop_times['shape_dist_traveled'], downcast='float')
+    stop_times['stop_sequence'] = pd.to_numeric(stop_times['stop_sequence'], downcast='integer')
+    shapes['shape_pt_lat'] = pd.to_numeric(shapes['shape_pt_lat'], downcast='float')
+    shapes['shape_pt_lon'] = pd.to_numeric(shapes['shape_pt_lon'], downcast='float')
+    shapes['shape_pt_sequence'] = pd.to_numeric(shapes['shape_pt_sequence'], downcast='integer')
     
     # Clean IDs
     trips['trip_id'] = trips['trip_id'].str.replace(r'\.0$', '', regex=True).str.strip()
@@ -310,7 +312,6 @@ def generate_visuals_and_map():
 
     st.session_state.analysis_results = {'fig_A': fig_A, 'fig_B': fig_B, 'stops_df': stops_df, 'segments_df': segments_df, 'kepler_config': kepler_config}
 
-
 # ==============================================================================
 # 5. UI COMPONENTS & WIDGET HIERARCHY
 # ==============================================================================
@@ -320,9 +321,6 @@ st.caption("Open-data analysis of TTC streetcar performance versus published GTF
 parquet_path = get_parquet_path()
 available_routes = get_available_routes(parquet_path)
 stops, trips, stop_times, shapes = load_gtfs()
-stop_times = stop_times.merge(stops[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']], on='stop_id', how='left')
-del stops # OPTIMIZED: Free up memory from the stops dataframe immediately after merge
-gc.collect()
 
 with st.sidebar:
     st.header("1. Route Configuration")
@@ -345,8 +343,10 @@ with st.sidebar:
 
     gtfs_route_trips = gtfs_route_trips[gtfs_route_trips['trip_headsign'] == selected_dir]
     
+    # Deferred Merge: Only merge Stops data ONCE we've narrowed down to the selected route
     valid_st_sidebar = stop_times[stop_times['trip_id'].isin(gtfs_route_trips['trip_id'])].copy()
     if not valid_st_sidebar.empty:
+        valid_st_sidebar = valid_st_sidebar.merge(stops, on='stop_id', how='left') # Safe, minimal merge footprint
         sample_t = valid_st_sidebar['trip_id'].iloc[0]
         sample_stops = valid_st_sidebar[valid_st_sidebar['trip_id'] == sample_t].sort_values('stop_sequence')
         if sample_stops['shape_dist_traveled'].max() > 500:
@@ -407,7 +407,10 @@ with tab_analysis:
             if valid_trips.empty:
                 st.error("No historical data matches GTFS schedule for this Day Type / Direction.")
             else:
+                # Deferred Merge: Only merge Stops data ONCE we've narrowed down to valid historical trips
                 valid_st = stop_times[stop_times['trip_id'].isin(valid_trips['trip_id'])].copy()
+                valid_st = valid_st.merge(stops, on='stop_id', how='left') # Safe, minimal merge footprint
+                
                 valid_st['arrival_sec'] = valid_st['arrival_time'].apply(parse_gtfs_time)
                 start_times_series = valid_st.groupby('trip_id')['arrival_sec'].transform('min')
                 valid_st['relative_sec'] = valid_st['arrival_sec'] - start_times_series
@@ -425,11 +428,14 @@ with tab_analysis:
                 trip_orig_dict = dict(zip(first_stops['trip_id'], first_stops['stop_name']))
                 trip_dest_dict = dict(zip(last_stops['trip_id'], last_stops['stop_name']))
 
-                historical_pairs = set(zip(df_hist['op_date'], df_hist['trip_id'])) 
+                # CPU OPTIMIZATION: Pre-calculate counts instead of iterating millions of times
+                trip_hist_counts = df_hist.groupby('trip_id')['op_date'].nunique().to_dict()
                 
                 sig_ui_list = []
                 for sig, t_ids in signatures_dict.items():
-                    hist_run_count = sum(1 for date, tid in historical_pairs if tid in t_ids)
+                    # Look up pre-calculated values (O(1) lookup instead of O(N) over historical data)
+                    hist_run_count = sum(trip_hist_counts.get(tid, 0) for tid in t_ids)
+                    
                     if hist_run_count == 0: continue
                     start_secs = [trip_start_dict[tid] for tid in t_ids]
                     min_s, max_s = min(start_secs), max(start_secs)
