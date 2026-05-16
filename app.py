@@ -102,7 +102,6 @@ def load_route_data(path, selected_route):
         filters=filter_cond
     )
     
-    # DEFENSIVE: Aggressively cast trip_id to clean string to ensure GTFS matching
     df['trip_id'] = df['trip_id'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
     df['route_id'] = df['route_id'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
     
@@ -123,13 +122,25 @@ def load_route_data(path, selected_route):
 
 @st.cache_data(show_spinner="Loading Static GTFS Data...")
 def load_gtfs():
+    """
+    OPTIMIZED: This function is a primary target for startup memory optimization.
+    - Uses memory-efficient 'pyarrow' string dtypes.
+    - Converts low-cardinality columns like 'trip_headsign' to 'category' type.
+    """
     def get_file(filename):
         if os.path.exists(filename): return filename
         return hf_hub_download(repo_id=HF_REPO, filename=filename, repo_type="dataset")
 
-    # DEFENSIVE: Explicitly read all IDs as strings from the start
+    # Define dtypes for memory efficiency
+    trips_dtype = {
+        'route_id': 'string[pyarrow]',
+        'trip_id': 'string[pyarrow]',
+        'shape_id': 'string[pyarrow]',
+        'trip_headsign': 'category' # Category is highly efficient for repeated text
+    }
+
     stops = pd.read_csv(get_file(GTFS_STOPS), usecols=['stop_id', 'stop_name', 'stop_lat', 'stop_lon'], dtype=str)
-    trips = pd.read_csv(get_file(GTFS_TRIPS), usecols=['route_id', 'trip_id', 'shape_id', 'trip_headsign'], dtype=str)
+    trips = pd.read_csv(get_file(GTFS_TRIPS), usecols=['route_id', 'trip_id', 'shape_id', 'trip_headsign'], dtype=trips_dtype)
     stop_times = pd.read_csv(get_file(GTFS_STOP_TIMES), usecols=['trip_id', 'stop_id', 'arrival_time', 'stop_sequence', 'shape_dist_traveled'], dtype=str)
     shapes = pd.read_csv(get_file(GTFS_SHAPES), usecols=['shape_id', 'shape_pt_lat', 'shape_pt_lon', 'shape_pt_sequence'], dtype=str)
     
@@ -140,7 +151,7 @@ def load_gtfs():
     shapes['shape_pt_lon'] = shapes['shape_pt_lon'].astype(float)
     shapes['shape_pt_sequence'] = shapes['shape_pt_sequence'].astype(int)
     
-    # Clean string IDs precisely the same way as Parquet
+    # Clean IDs
     trips['trip_id'] = trips['trip_id'].str.replace(r'\.0$', '', regex=True).str.strip()
     stop_times['trip_id'] = stop_times['trip_id'].str.replace(r'\.0$', '', regex=True).str.strip()
     
@@ -274,7 +285,6 @@ def generate_visuals_and_map():
     for i in range(len(st_filtered) - 1):
         s1, s2 = st_filtered.iloc[i], st_filtered.iloc[i+1]
         
-        # DEFENSIVE: Prevent shapely ValueError if stops share exact same coordinates
         if s1.stop_lon == s2.stop_lon and s1.stop_lat == s2.stop_lat:
             continue 
             
@@ -311,6 +321,8 @@ parquet_path = get_parquet_path()
 available_routes = get_available_routes(parquet_path)
 stops, trips, stop_times, shapes = load_gtfs()
 stop_times = stop_times.merge(stops[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']], on='stop_id', how='left')
+del stops # OPTIMIZED: Free up memory from the stops dataframe immediately after merge
+gc.collect()
 
 with st.sidebar:
     st.header("1. Route Configuration")
@@ -319,7 +331,6 @@ with st.sidebar:
     gtfs_route_trips = trips[trips['route_id'] == selected_route].copy()
     headsigns = gtfs_route_trips['trip_headsign'].dropna().unique()
     
-    # DEFENSIVE: Prevent crash if a route exists in history but has no current GTFS headsigns
     if len(headsigns) == 0:
         st.error(f"No GTFS data available for Route {selected_route}.")
         st.stop()
@@ -346,7 +357,6 @@ with st.sidebar:
         
         st.session_state.stop_filter_ids = selected_stop_ids
         
-        # DEFENSIVE: Handle empty selected list
         if not selected_stop_ids:
             st.session_state.force_t0_disabled = True
         else:
@@ -379,7 +389,6 @@ with tab_analysis:
         with st.spinner("Extracting & Indexing Historical Data for Route..."):
             df_hist = load_route_data(parquet_path, selected_route)
             
-            # DEFENSIVE: Stop if the route has no historical data at all
             if df_hist.empty:
                 st.error(f"No historical GPS data found for Route {selected_route}.")
                 st.stop()
@@ -478,7 +487,6 @@ with tab_analysis:
                     shp_pts = shapes[shapes['shape_id'] == sample_shape_id].copy().sort_values('shape_pt_sequence')
                     line_coords = list(zip(shp_pts['shape_pt_lon'].astype(float), shp_pts['shape_pt_lat'].astype(float)))
                     
-                    # DEFENSIVE: Prevent geometry construction failure
                     if len(line_coords) < 2:
                         st.error("GTFS Geometry error: Route track has fewer than 2 coordinate points.")
                         st.stop()
@@ -509,7 +517,6 @@ with tab_analysis:
                         gtfs_start_sec = s2_vars['trip_start_dict'].get(t_id)
                         if gtfs_start_sec is None: continue
 
-                        # DEFENSIVE: idxmax on empty sequence prevention
                         if group['official_dist_km'].isna().all(): continue
                         
                         max_dist_idx = group['official_dist_km'].idxmax()
@@ -571,7 +578,6 @@ with tab_analysis:
                                 'lat': group['latitude'].tolist(), 'lon': group['longitude'].tolist(), 'speed': group['prev_speed_kmh'].tolist()
                             })
 
-                    # DEFENSIVE: Ensure we actually tracked valid runs before rendering blanks
                     if not mode_b_lines:
                         st.warning("No tracked trips matched the criteria. They may have dropped off tracking early.")
                         st.stop()
