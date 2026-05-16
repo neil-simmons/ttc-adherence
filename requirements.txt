@@ -7,7 +7,7 @@ plotly
 scipy
 requests
 pyarrow
-keplergl
+keplergl==0.3.2
 streamlit-keplergl
 huggingface-hub
 setuptools==69.5.1
