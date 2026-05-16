@@ -12,6 +12,7 @@ from keplergl import KeplerGl
 import pyarrow.parquet as pq
 import pyarrow.compute as pc
 import pyarrow as pa
+import pyarrow.dataset as ds
 import warnings
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -56,14 +57,15 @@ defaults = {
     'force_t0_disabled': False,
     'reliability_window': 'Standard (-15s to +2min)',
     'route_selection': None,
-    'direction_selection': None
+    'direction_selection': None,
+    'stage2_vars': None
 }
 for key, val in defaults.items():
     if key not in st.session_state:
         st.session_state[key] = val
 
 # ==============================================================================
-# 2. STRICT & DEFENSIVE DATA LOADERS
+# 2. STRICT & DEFENSIVE DATA LOADERS (OOM SAFE)
 # ==============================================================================
 @st.cache_resource(show_spinner="Connecting to Data Source (Parquet)...")
 def get_parquet_path():
@@ -81,8 +83,12 @@ def get_available_routes(path):
             cleaned_routes.add(r_str)
     return sorted(list(cleaned_routes))
 
-@st.cache_data(max_entries=1, show_spinner="Extracting Route Data via Pushdown Predicate...")
+@st.cache_data(max_entries=1, show_spinner="Extracting Route Data (Streaming Pushdown)...")
 def load_route_data(path, selected_route):
+    """
+    OPTIMIZED: Uses pyarrow.dataset to stream and filter before RAM allocation.
+    Strictly forces int32/float32 and Categorical types to prevent OOM death.
+    """
     schema = pq.read_schema(path)
     route_id_type = schema.field('route_id').type
     
@@ -93,28 +99,36 @@ def load_route_data(path, selected_route):
     else:
         filter_val = [str(selected_route), f"{selected_route}.0"]
         
-    filter_cond = [('route_id', 'in', filter_val)]
+    dataset = ds.dataset(path, format="parquet")
     
-    df = pd.read_parquet(
-        path, 
-        engine='pyarrow', 
-        columns=['route_id', 'trip_id', 'vehicle_id', 'system_time', 'latitude', 'longitude'],
-        filters=filter_cond
+    # Pushdown filter executed AT disk level, skipping the route_id column entirely
+    table = dataset.to_table(
+        columns=['trip_id', 'system_time', 'latitude', 'longitude'],
+        filter=ds.field('route_id').isin(filter_val)
     )
+    df = table.to_pandas()
     
-    df['trip_id'] = df['trip_id'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-    df['route_id'] = df['route_id'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    # Aggressive Categorical & Downcast Conversion
+    df['trip_id'] = df['trip_id'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().astype('category')
+    df['latitude'] = df['latitude'].astype(np.float32)
+    df['longitude'] = df['longitude'].astype(np.float32)
+    df['system_time'] = df['system_time'].astype(np.int32)
     
-    df['local_time'] = pd.to_datetime(df['system_time'], unit='s', utc=True).dt.tz_convert('America/Toronto')
-    mask = (df['local_time'].dt.tz_localize(None) >= pd.to_datetime(START_DATE)) & \
-           (df['local_time'].dt.tz_localize(None) <= pd.to_datetime(END_DATE))
+    # Time Filtering
+    local_time = pd.to_datetime(df['system_time'], unit='s', utc=True).dt.tz_convert('America/Toronto')
+    mask = (local_time.dt.tz_localize(None) >= pd.to_datetime(START_DATE)) & \
+           (local_time.dt.tz_localize(None) <= pd.to_datetime(END_DATE))
     df = df[mask].copy()
+    local_time = local_time[mask]
     
-    # Optmized Downcasting for Memory 
-    df['hour'] = df['local_time'].dt.hour.astype(np.int8)
-    df['sec_since_midnight'] = (df['hour'] * 3600 + df['local_time'].dt.minute * 60 + df['local_time'].dt.second).astype(np.int32)
-    df['op_seconds'] = np.where(df['hour'] < 4, df['sec_since_midnight'] + 86400, df['sec_since_midnight']).astype(np.int32)
-    df['op_date'] = np.where(df['hour'] < 4, (df['local_time'] - pd.Timedelta(days=1)).dt.date, df['local_time'].dt.date)
+    hour = local_time.dt.hour.astype(np.int8)
+    sec_since_midnight = (hour * 3600 + local_time.dt.minute * 60 + local_time.dt.second).astype(np.int32)
+    
+    df['op_seconds'] = np.where(hour < 4, sec_since_midnight + 86400, sec_since_midnight).astype(np.int32)
+    op_date = np.where(hour < 4, (local_time - pd.Timedelta(days=1)).dt.date, local_time.dt.date)
+    
+    # Categories for discrete strings/dates to save ~80% memory
+    df['op_date'] = pd.Series(op_date).astype(str).astype('category')
     df['day_of_week'] = pd.to_datetime(df['op_date']).dt.dayofweek.astype(np.int8)
     df['is_holiday'] = df['op_date'].astype(str).isin(STAT_HOLIDAYS)
     
@@ -124,8 +138,7 @@ def load_route_data(path, selected_route):
 @st.cache_data(show_spinner="Loading Static GTFS Data...")
 def load_gtfs():
     """
-    OPTIMIZED: Aggressive downcasting and PyArrow backend string typing
-    to prevent memory resets on Streamlit Community Cloud.
+    OPTIMIZED: Forces Categorical dtypes natively on read.
     """
     def get_file(filename):
         if os.path.exists(filename): return filename
@@ -134,9 +147,11 @@ def load_gtfs():
     str_dtype = 'string[pyarrow]'
     
     stops = pd.read_csv(get_file(GTFS_STOPS), usecols=['stop_id', 'stop_name', 'stop_lat', 'stop_lon'], dtype=str_dtype)
+    stops['stop_id'] = stops['stop_id'].astype('category')
     
     trips = pd.read_csv(get_file(GTFS_TRIPS), usecols=['route_id', 'trip_id', 'shape_id', 'trip_headsign'], 
                         dtype={'route_id': str_dtype, 'trip_id': str_dtype, 'shape_id': str_dtype, 'trip_headsign': 'category'})
+    trips['trip_id'] = trips['trip_id'].str.replace(r'\.0$', '', regex=True).str.strip().astype('category')
     
     stop_times = pd.read_csv(get_file(GTFS_STOP_TIMES), 
                              usecols=['trip_id', 'stop_id', 'arrival_time', 'stop_sequence', 'shape_dist_traveled'], 
@@ -147,16 +162,16 @@ def load_gtfs():
                          dtype={'shape_id': str_dtype})
     
     # Cast numerics efficiently
+    stop_times['trip_id'] = stop_times['trip_id'].str.replace(r'\.0$', '', regex=True).str.strip().astype('category')
+    stop_times['stop_id'] = stop_times['stop_id'].astype('category')
     stop_times['shape_dist_traveled'] = pd.to_numeric(stop_times['shape_dist_traveled'], downcast='float')
     stop_times['stop_sequence'] = pd.to_numeric(stop_times['stop_sequence'], downcast='integer')
+    
     shapes['shape_pt_lat'] = pd.to_numeric(shapes['shape_pt_lat'], downcast='float')
     shapes['shape_pt_lon'] = pd.to_numeric(shapes['shape_pt_lon'], downcast='float')
     shapes['shape_pt_sequence'] = pd.to_numeric(shapes['shape_pt_sequence'], downcast='integer')
     
-    # Clean IDs
-    trips['trip_id'] = trips['trip_id'].str.replace(r'\.0$', '', regex=True).str.strip()
-    stop_times['trip_id'] = stop_times['trip_id'].str.replace(r'\.0$', '', regex=True).str.strip()
-    
+    gc.collect()
     return stops, trips, stop_times, shapes
 
 # ==============================================================================
@@ -343,10 +358,9 @@ with st.sidebar:
 
     gtfs_route_trips = gtfs_route_trips[gtfs_route_trips['trip_headsign'] == selected_dir]
     
-    # Deferred Merge: Only merge Stops data ONCE we've narrowed down to the selected route
     valid_st_sidebar = stop_times[stop_times['trip_id'].isin(gtfs_route_trips['trip_id'])].copy()
     if not valid_st_sidebar.empty:
-        valid_st_sidebar = valid_st_sidebar.merge(stops, on='stop_id', how='left') # Safe, minimal merge footprint
+        valid_st_sidebar = valid_st_sidebar.merge(stops, on='stop_id', how='left') 
         sample_t = valid_st_sidebar['trip_id'].iloc[0]
         sample_stops = valid_st_sidebar[valid_st_sidebar['trip_id'] == sample_t].sort_values('stop_sequence')
         if sample_stops['shape_dist_traveled'].max() > 500:
@@ -387,6 +401,8 @@ with tab_analysis:
         
     if load_sig_btn:
         with st.spinner("Extracting & Indexing Historical Data for Route..."):
+            # The Dataframe generated here is cached efficiently. 
+            # We explicitly NEVER save this dataframe to st.session_state.
             df_hist = load_route_data(parquet_path, selected_route)
             
             if df_hist.empty:
@@ -407,9 +423,8 @@ with tab_analysis:
             if valid_trips.empty:
                 st.error("No historical data matches GTFS schedule for this Day Type / Direction.")
             else:
-                # Deferred Merge: Only merge Stops data ONCE we've narrowed down to valid historical trips
                 valid_st = stop_times[stop_times['trip_id'].isin(valid_trips['trip_id'])].copy()
-                valid_st = valid_st.merge(stops, on='stop_id', how='left') # Safe, minimal merge footprint
+                valid_st = valid_st.merge(stops, on='stop_id', how='left') 
                 
                 valid_st['arrival_sec'] = valid_st['arrival_time'].apply(parse_gtfs_time)
                 start_times_series = valid_st.groupby('trip_id')['arrival_sec'].transform('min')
@@ -417,23 +432,23 @@ with tab_analysis:
 
                 valid_st = valid_st.sort_values(['trip_id', 'stop_sequence'])
                 signatures_dict = {}
-                for t_id, df_group in valid_st.groupby('trip_id'):
+                for t_id, df_group in valid_st.groupby('trip_id', observed=True):
                     sig = tuple(zip(df_group['stop_id'], df_group['relative_sec']))
+                    if not sig: continue
                     if sig not in signatures_dict: signatures_dict[sig] = []
                     signatures_dict[sig].append(t_id)
 
-                first_stops = valid_st.groupby('trip_id').first().reset_index()
-                last_stops = valid_st.groupby('trip_id').last().reset_index()
+                first_stops = valid_st.groupby('trip_id', observed=True).first().reset_index()
+                last_stops = valid_st.groupby('trip_id', observed=True).last().reset_index()
                 trip_start_dict = dict(zip(first_stops['trip_id'], first_stops['arrival_sec']))
                 trip_orig_dict = dict(zip(first_stops['trip_id'], first_stops['stop_name']))
                 trip_dest_dict = dict(zip(last_stops['trip_id'], last_stops['stop_name']))
 
-                # CPU OPTIMIZATION: Pre-calculate counts instead of iterating millions of times
-                trip_hist_counts = df_hist.groupby('trip_id')['op_date'].nunique().to_dict()
+                # O(1) memory-efficient lookup instead of scanning loop
+                trip_hist_counts = df_hist.groupby('trip_id', observed=True)['op_date'].nunique().to_dict()
                 
                 sig_ui_list = []
                 for sig, t_ids in signatures_dict.items():
-                    # Look up pre-calculated values (O(1) lookup instead of O(N) over historical data)
                     hist_run_count = sum(trip_hist_counts.get(tid, 0) for tid in t_ids)
                     
                     if hist_run_count == 0: continue
@@ -449,14 +464,19 @@ with tab_analysis:
 
                 sig_ui_list = sorted(sig_ui_list, key=lambda x: x['min_sec'])
                 
+                # Cleanup huge local variables immediately to save RAM before st.session_state is updated
+                del valid_st 
+                gc.collect()
+
                 if not sig_ui_list:
                     st.warning("No GTFS Signatures scheduled to run within your time range.")
                     st.session_state.signatures_loaded = False
                 else:
                     st.session_state.signature_list = sig_ui_list
                     st.session_state.signatures_loaded = True
+                    # WE NO LONGER STORE df_hist OR valid_st IN SESSION STATE HERE!
                     st.session_state.stage2_vars = {
-                        'df_hist': df_hist, 'valid_st': valid_st, 'trip_start_dict': trip_start_dict,
+                        'trip_start_dict': trip_start_dict,
                         'filter_start_sec': filter_start_sec, 'filter_end_sec': filter_end_sec,
                         'time_mode': time_mode, 'force_t0': force_t0, 'day_type': day_type,
                         'time_range_str': f"{start_time_input}-{end_time_input}"
@@ -473,12 +493,29 @@ with tab_analysis:
             with st.spinner("Running Monotonic Sequential Tracker & Spatial Interpolations..."):
                 try:
                     s2_vars = st.session_state.stage2_vars
-                    df_hist, valid_st = s2_vars['df_hist'], s2_vars['valid_st']
                     selected_sig = st.session_state.signature_list[selected_sig_idx]
                     matching_trip_ids = selected_sig['t_ids']
                     
+                    # Pull df_hist from the cache directly instead of taking it from session_state
+                    df_hist_raw = load_route_data(parquet_path, selected_route)
+                    
+                    if s2_vars['day_type'] == "Saturdays": day_mask = (df_hist_raw['day_of_week'] == 5) & (~df_hist_raw['is_holiday'])
+                    elif s2_vars['day_type'] == "Sundays & Holidays": day_mask = (df_hist_raw['day_of_week'] == 6) | (df_hist_raw['is_holiday'])
+                    else: day_mask = (df_hist_raw['day_of_week'] <= 4) & (~df_hist_raw['is_holiday'])
+                    
+                    df_hist_filtered = df_hist_raw[day_mask]
+                    trip_hist = df_hist_filtered[df_hist_filtered['trip_id'].isin(matching_trip_ids)].copy()
+                    
+                    # Reconstruct valid_st for ONLY the selected trips (Saves massive memory)
+                    valid_st_stage2 = stop_times[stop_times['trip_id'].isin(matching_trip_ids)].copy()
+                    valid_st_stage2 = valid_st_stage2.merge(stops, on='stop_id', how='left')
+                    valid_st_stage2['arrival_sec'] = valid_st_stage2['arrival_time'].apply(parse_gtfs_time)
+                    start_times_series_s2 = valid_st_stage2.groupby('trip_id', observed=True)['arrival_sec'].transform('min')
+                    valid_st_stage2['relative_sec'] = valid_st_stage2['arrival_sec'] - start_times_series_s2
+
                     sample_trip = matching_trip_ids[0]
-                    st_filtered = valid_st[valid_st['trip_id'] == sample_trip].copy().sort_values('stop_sequence')
+                    st_filtered = valid_st_stage2[valid_st_stage2['trip_id'] == sample_trip].copy().sort_values('stop_sequence')
+                    
                     if st_filtered['shape_dist_traveled'].max() > 500:
                         st_filtered['shape_dist_traveled'] /= 1000.0
                         
@@ -499,7 +536,6 @@ with tab_analysis:
                         
                     target_line_utm = gpd.GeoDataFrame(index=[0], crs=LATLON_PROJ, geometry=[LineString(line_coords)]).to_crs(UTM_PROJ).geometry.iloc[0]
 
-                    trip_hist = df_hist[df_hist['trip_id'].isin(matching_trip_ids)].copy()
                     trip_hist_gdf = gpd.GeoDataFrame(trip_hist, crs=LATLON_PROJ, geometry=gpd.points_from_xy(trip_hist.longitude, trip_hist.latitude)).to_crs(UTM_PROJ)
                     
                     trip_hist['dist_to_track_m'] = trip_hist_gdf.distance(target_line_utm)
@@ -516,7 +552,7 @@ with tab_analysis:
                     actual_relative_times = {stop_id: [] for stop_id in st_filtered['stop_id']}
                     mode_b_lines = []
                     
-                    for (op_date, t_id), group in trip_hist.groupby(['op_date', 'trip_id']):
+                    for (op_date, t_id), group in trip_hist.groupby(['op_date', 'trip_id'], observed=True):
                         group = group.sort_values('system_time').reset_index(drop=True)
                         if len(group) < 3: continue 
                             
@@ -577,10 +613,16 @@ with tab_analysis:
                             group['prev_speed_kmh'] = group['prev_speed_kmh'].fillna(0).abs()
                             group['relative_min'] = (group['op_seconds'] - anchor_sec) / 60.0
                             
+                            # Safely fetch the op_date back from the category format for plotting
+                            safe_date = str(op_date) 
+                            
+                            # Convert system_time back to string formatted time 
+                            abs_time_series = pd.to_datetime(group['system_time'], unit='s', utc=True).dt.tz_convert('America/Toronto').dt.strftime('%I:%M:%S %p').tolist()
+                            
                             mode_b_lines.append({
-                                'name': f"{op_date} | {t_id}", 'op_date': str(op_date), 'start_time': format_seconds_to_time(list(run_interpolations.values())[0]), 't_id': str(t_id),
+                                'name': f"{safe_date} | {t_id}", 'op_date': safe_date, 'start_time': format_seconds_to_time(list(run_interpolations.values())[0]), 't_id': str(t_id),
                                 'x': group['relative_min'].tolist(), 'y': group['official_dist_km'].tolist(),
-                                'abs_time': group['local_time'].dt.strftime('%I:%M:%S %p').tolist(),
+                                'abs_time': abs_time_series,
                                 'lat': group['latitude'].tolist(), 'lon': group['longitude'].tolist(), 'speed': group['prev_speed_kmh'].tolist()
                             })
 
