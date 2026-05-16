@@ -5,10 +5,11 @@ import geopandas as gpd
 from shapely.geometry import Point, LineString
 import plotly.graph_objects as go
 import os
-import requests
+import gc
 from huggingface_hub import hf_hub_download
 from streamlit_keplergl import keplergl_static
 from keplergl import KeplerGl
+import pyarrow.parquet as pq
 import warnings
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -25,7 +26,7 @@ st.set_page_config(
 
 # Hugging Face Repository details
 HF_REPO = "neil-simmons/ttc-avl-data"
-CSV_HISTORY = "ttc_all_streetcars_history.csv"
+PARQUET_HISTORY = "ttc_all_streetcars_history.parquet" # Updated to Parquet
 GTFS_STOP_TIMES = "stop_times.txt"
 GTFS_SHAPES = "shapes.txt"
 GTFS_STOPS = "stops.txt"
@@ -49,12 +50,11 @@ defaults = {
     'signatures_loaded': False,
     'signature_list': [],
     'selected_signature': None,
-    'raw_pipeline_data': None,       # Stores mathematical outputs for fast recalcs
-    'analysis_results': None,        # Stores final (fig_A, fig_B, kepler_map)
-    'stop_filter_ids': None,         # Unified stop filter
-    'force_t0_disabled': False,      # True when stop filter excludes first stop
-    'reliability_window': 'Standard (-15s to +2m)', # Active window config
-    'available_routes': [],
+    'raw_pipeline_data': None,
+    'analysis_results': None,
+    'stop_filter_ids': None,
+    'force_t0_disabled': False,
+    'reliability_window': 'Standard (-15s to +2min)',
     'route_selection': None,
     'direction_selection': None
 }
@@ -63,18 +63,47 @@ for key, val in defaults.items():
         st.session_state[key] = val
 
 # ==============================================================================
-# 2. DATA LOADERS (Cached)
+# 2. MEMORY-OPTIMIZED DATA LOADERS
 # ==============================================================================
-@st.cache_data(show_spinner="Downloading & Processing AVL Data (First load may take a minute)...")
-def load_avl_data():
-    """Downloads AVL CSV from Hugging Face and applies core cleaning."""
-    path = hf_hub_download(repo_id=HF_REPO, filename=CSV_HISTORY, repo_type="dataset")
-    cols = ['route_id', 'trip_id', 'vehicle_id', 'system_time', 'latitude', 'longitude']
-    df = pd.read_csv(path, usecols=cols, dtype={'route_id': str, 'trip_id': str, 'vehicle_id': str, 'system_time': float}, engine='pyarrow')
+@st.cache_resource(show_spinner="Connecting to Data Source (Parquet)...")
+def get_parquet_path():
+    """Downloads the Parquet file to the local Streamlit Cloud container once."""
+    return hf_hub_download(repo_id=HF_REPO, filename=PARQUET_HISTORY, repo_type="dataset")
+
+@st.cache_data(show_spinner="Indexing available routes...")
+def get_available_routes(path):
+    """Memory optimization: Reads ONLY the route_id column to populate the UI dropdown."""
+    table = pq.read_table(path, columns=['route_id'])
+    # Convert to pandas, clean, and extract unique routes without loading the full file
+    routes = table['route_id'].to_pandas().astype(str).str.replace(r'\.0$', '', regex=True).str.strip().unique()
+    return sorted([r for r in routes if r and r != 'nan'])
+
+@st.cache_data(max_entries=2, show_spinner="Loading Historical Data for Selected Route...")
+def load_route_data(path, selected_route):
+    """
+    Memory Optimization: 
+    1. Reads only necessary columns from the Parquet file.
+    2. Immediately filters out 90% of the data by targeting only the chosen route.
+    3. Downcasts float64 to float32 to save RAM.
+    4. max_entries=2 ensures we don't hoard memory if users click through many routes.
+    """
+    # Load specific columns directly using PyArrow backend for optimal memory
+    df = pd.read_parquet(
+        path, 
+        engine='pyarrow', 
+        columns=['route_id', 'trip_id', 'vehicle_id', 'system_time', 'latitude', 'longitude']
+    )
     
-    df['trip_id'] = df['trip_id'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    # Filter to specific route aggressively
     df['route_id'] = df['route_id'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    df = df[df['route_id'] == selected_route].copy()
     
+    # Clean and downcast remaining data
+    df['trip_id'] = df['trip_id'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    df['latitude'] = df['latitude'].astype('float32')
+    df['longitude'] = df['longitude'].astype('float32')
+    
+    # Time formatting
     df['local_time'] = pd.to_datetime(df['system_time'], unit='s', utc=True).dt.tz_convert('America/Toronto')
     mask = (df['local_time'].dt.tz_localize(None) >= pd.to_datetime(START_DATE)) & \
            (df['local_time'].dt.tz_localize(None) <= pd.to_datetime(END_DATE))
@@ -82,28 +111,31 @@ def load_avl_data():
     
     df['hour'] = df['local_time'].dt.hour
     df['sec_since_midnight'] = df['hour'] * 3600 + df['local_time'].dt.minute * 60 + df['local_time'].dt.second
-    df['op_seconds'] = np.where(df['hour'] < 4, df['sec_since_midnight'] + 86400, df['sec_since_midnight'])
+    df['op_seconds'] = np.where(df['hour'] < 4, df['sec_since_midnight'] + 86400, df['sec_since_midnight']).astype('int32')
     df['op_date'] = np.where(df['hour'] < 4, (df['local_time'] - pd.Timedelta(days=1)).dt.date, df['local_time'].dt.date)
-    df['day_of_week'] = pd.to_datetime(df['op_date']).dt.dayofweek 
+    df['day_of_week'] = pd.to_datetime(df['op_date']).dt.dayofweek.astype('int8')
     df['is_holiday'] = df['op_date'].astype(str).isin(STAT_HOLIDAYS)
+    
+    # Explicit garbage collection to free up memory from the initial read
+    gc.collect()
     return df
 
 @st.cache_data(show_spinner="Loading Static GTFS Data...")
 def load_gtfs():
-    """Reads GTFS files, prioritizing Hugging Face for large files."""
+    """Memory optimization: Specifies datatypes directly during CSV ingestion."""
     def get_file(filename):
-        if os.path.exists(filename):
-            return filename
-        # Fallback to HF
+        if os.path.exists(filename): return filename
         return hf_hub_download(repo_id=HF_REPO, filename=filename, repo_type="dataset")
 
-    stops = pd.read_csv(get_file(GTFS_STOPS), usecols=['stop_id', 'stop_name', 'stop_lat', 'stop_lon'], dtype={'stop_id': str})
-    trips = pd.read_csv(get_file(GTFS_TRIPS), usecols=['route_id', 'trip_id', 'shape_id', 'trip_headsign'], dtype={'route_id': str, 'trip_id': str, 'shape_id': str})
-    stop_times = pd.read_csv(get_file(GTFS_STOP_TIMES), usecols=['trip_id', 'stop_id', 'arrival_time', 'stop_sequence', 'shape_dist_traveled'], dtype={'trip_id': str, 'stop_id': str})
-    shapes = pd.read_csv(get_file(GTFS_SHAPES), usecols=['shape_id', 'shape_pt_lat', 'shape_pt_lon', 'shape_pt_sequence'], dtype={'shape_id': str})
+    # Use PyArrow engine and categorical types to compress GTFS memory footprint
+    stops = pd.read_csv(get_file(GTFS_STOPS), usecols=['stop_id', 'stop_name', 'stop_lat', 'stop_lon'], dtype={'stop_id': 'string', 'stop_lat': 'float32', 'stop_lon': 'float32'}, engine='pyarrow')
+    trips = pd.read_csv(get_file(GTFS_TRIPS), usecols=['route_id', 'trip_id', 'shape_id', 'trip_headsign'], dtype={'route_id': 'string', 'trip_id': 'string', 'shape_id': 'string', 'trip_headsign': 'category'}, engine='pyarrow')
+    stop_times = pd.read_csv(get_file(GTFS_STOP_TIMES), usecols=['trip_id', 'stop_id', 'arrival_time', 'stop_sequence', 'shape_dist_traveled'], dtype={'trip_id': 'string', 'stop_id': 'string', 'stop_sequence': 'int16', 'shape_dist_traveled': 'float32'}, engine='pyarrow')
+    shapes = pd.read_csv(get_file(GTFS_SHAPES), usecols=['shape_id', 'shape_pt_lat', 'shape_pt_lon', 'shape_pt_sequence'], dtype={'shape_id': 'string', 'shape_pt_lat': 'float32', 'shape_pt_lon': 'float32', 'shape_pt_sequence': 'int32'}, engine='pyarrow')
     
-    trips['trip_id'] = trips['trip_id'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-    stop_times['trip_id'] = stop_times['trip_id'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    trips['trip_id'] = trips['trip_id'].str.replace(r'\.0$', '', regex=True).str.strip()
+    stop_times['trip_id'] = stop_times['trip_id'].str.replace(r'\.0$', '', regex=True).str.strip()
+    
     return stops, trips, stop_times, shapes
 
 # ==============================================================================
@@ -149,20 +181,17 @@ def generate_visuals_and_map():
     actual_relative_times = data['actual_relative_times']
     mode_b_lines = data['mode_b_lines']
     
-    # 4a. Apply Reliability Window Rules dynamically
+    # Apply Reliability Window Rules dynamically
     is_standard = st.session_state.reliability_window.startswith('Standard')
     min_lat, max_lat = (-15, 120) if is_standard else (-300, 300)
     
-    reliability_dict = {}
-    reliability_vals = {}
-    sample_sizes = {}
+    reliability_dict, reliability_vals, sample_sizes = {}, {}, {}
     
     for i, stop in enumerate(st_filtered.itertuples()):
         arr = actual_relative_times[stop.stop_id]
         sample_sizes[stop.stop_id] = len(arr)
         if not arr: 
-            reliability_dict[stop.stop_id] = "N/A"
-            reliability_vals[stop.stop_id] = 0.0
+            reliability_dict[stop.stop_id], reliability_vals[stop.stop_id] = "N/A", 0.0
             continue
             
         sched_sec = stop.relative_sec 
@@ -171,7 +200,7 @@ def generate_visuals_and_map():
         reliability_dict[stop.stop_id] = f"{pct:.1f}%"
         reliability_vals[stop.stop_id] = pct
 
-    # 4b. Generate Figure A (Density)
+    # Figure A (Density)
     fig_A = go.Figure()
     y_tick_texts = [f"{row['stop_name']} ({row['shape_dist_traveled']:.1f} km) [{reliability_dict[row['stop_id']]}]" for _, row in st_filtered.iterrows()]
     
@@ -203,145 +232,69 @@ def generate_visuals_and_map():
             f"Interquartile Range: {q1:+.1f} to {q3:+.1f} min<extra></extra>"
         )
 
-        fig_A.add_trace(go.Violin(
-            x=times_min, y=np.repeat(y_center, len(times_min)),
-            orientation='h', side='positive', width=global_cloud_width,
-            scalemode='count', line_color=c_base, fillcolor=c_fill,
-            showlegend=False, points=False, box_visible=False,  
-            hovertemplate=hardcoded_hover 
-        ))
-        fig_A.add_trace(go.Box(
-            x=times_min, y=np.repeat(box_center, len(times_min)), 
-            orientation='h', width=global_box_width,
-            line_color=c_base, fillcolor=c_box, boxpoints='outliers', 
-            marker=dict(color=c_outlier, size=4, opacity=0.8),
-            showlegend=False, hoveron='points', 
-            hovertemplate="<b>Outlier</b><br>Actual Arrival: %{x:+.1f} min<extra></extra>"
-        ))
+        fig_A.add_trace(go.Violin(x=times_min, y=np.repeat(y_center, len(times_min)), orientation='h', side='positive', width=global_cloud_width, scalemode='count', line_color=c_base, fillcolor=c_fill, showlegend=False, points=False, box_visible=False, hovertemplate=hardcoded_hover))
+        fig_A.add_trace(go.Box(x=times_min, y=np.repeat(box_center, len(times_min)), orientation='h', width=global_box_width, line_color=c_base, fillcolor=c_box, boxpoints='outliers', marker=dict(color=c_outlier, size=4, opacity=0.8), showlegend=False, hoveron='points', hovertemplate="<b>Outlier</b><br>Actual Arrival: %{x:+.1f} min<extra></extra>"))
             
-    # 4c. Generate Figure B (Spaghetti)
+    # Figure B (Spaghetti)
     fig_B = go.Figure()
     for line_data in mode_b_lines:
         N = len(line_data['x'])
         customdata_array = np.empty((N, 6), dtype=object)
-        customdata_array[:, 0] = line_data['op_date']
-        customdata_array[:, 1] = line_data['start_time']
-        customdata_array[:, 2] = line_data['t_id']
-        customdata_array[:, 3] = line_data['abs_time']
-        customdata_array[:, 4] = line_data['lat']
-        customdata_array[:, 5] = line_data['lon']
+        customdata_array[:, 0], customdata_array[:, 1], customdata_array[:, 2], customdata_array[:, 3], customdata_array[:, 4], customdata_array[:, 5] = line_data['op_date'], line_data['start_time'], line_data['t_id'], line_data['abs_time'], line_data['lat'], line_data['lon']
         
         fig_B.add_trace(go.Scattergl(
-            x=line_data['x'], y=line_data['y'],
-            mode='lines+markers', line=dict(width=0.3), marker=dict(size=1.5),
-            opacity=1.0, connectgaps=False, 
-            name=line_data['name'], text=line_data['speed'], 
-            customdata=customdata_array,
-            hovertemplate=(
-                "<b>Absolute Time:</b> %{customdata[3]}<br>"
-                "<b>Relative Arrival:</b> %{x:+.1f} min<br>"
-                "<b>Track Distance:</b> %{y:.2f} km<br>"
-                "<b>Speed:</b> %{text:.1f} km/h<br><br>"
-                "<b>Date:</b> %{customdata[0]}<br>"
-                "<b>Trip ID:</b> %{customdata[2]}<br>"
-                "<b>GPS:</b> %{customdata[4]:.5f}, %{customdata[5]:.5f}<br><extra></extra>"
-            )
+            x=line_data['x'], y=line_data['y'], mode='lines+markers', line=dict(width=0.3), marker=dict(size=1.5), opacity=1.0, connectgaps=False, name=line_data['name'], text=line_data['speed'], customdata=customdata_array,
+            hovertemplate="<b>Absolute Time:</b> %{customdata[3]}<br><b>Relative Arrival:</b> %{x:+.1f} min<br><b>Track Distance:</b> %{y:.2f} km<br><b>Speed:</b> %{text:.1f} km/h<br><br><b>Date:</b> %{customdata[0]}<br><b>Trip ID:</b> %{customdata[2]}<br><b>GPS:</b> %{customdata[4]:.5f}, %{customdata[5]:.5f}<br><extra></extra>"
         ))
 
     # Baseline for A and B
     sched_trace = go.Scattergl(
-        x=st_filtered['relative_sec'] / 60.0, y=st_filtered['shape_dist_traveled'],
-        mode='lines+markers', line=dict(color='#000000', width=1.4),
-        marker=dict(symbol='circle', size=4.5, color='#000000'),
-        name="Scheduled Baseline",
-        hovertemplate="<b>%{customdata}</b><br>Scheduled Profile: %{text}<extra></extra>",
-        text=[format_relative_time(s) for s in st_filtered['relative_sec']],
-        customdata=st_filtered['stop_name']
+        x=st_filtered['relative_sec'] / 60.0, y=st_filtered['shape_dist_traveled'], mode='lines+markers', line=dict(color='#000000', width=1.4), marker=dict(symbol='circle', size=4.5, color='#000000'), name="Scheduled Baseline",
+        hovertemplate="<b>%{customdata}</b><br>Scheduled Profile: %{text}<extra></extra>", text=[format_relative_time(s) for s in st_filtered['relative_sec']], customdata=st_filtered['stop_name']
     )
     fig_A.add_trace(sched_trace)
     fig_B.add_trace(sched_trace)
 
     # Clean Layout
     common_layout = dict(
-        yaxis_title="Official Track Distance (km) & Stops",
-        template="plotly_white", autosize=True,
-        yaxis=dict(
-            range=[st_filtered['shape_dist_traveled'].min() - 0.02, st_filtered['shape_dist_traveled'].max() + 0.05],
-            tickmode='array', tickvals=st_filtered['shape_dist_traveled'], ticktext=y_tick_texts, 
-            gridcolor='lightgray', automargin=True, zeroline=False, tickfont=dict(size=10) 
-        ),
-        xaxis=dict(
-            zeroline=False, showline=True, showgrid=True, gridcolor='lightgray', 
-            dtick=5, ticksuffix=" min", automargin=True, tickfont=dict(size=11) 
-        ),
-        margin=dict(l=10, r=20, t=60, b=10),
-        legend=dict(font=dict(size=10), itemsizing='constant')
+        yaxis_title="Official Track Distance (km) & Stops", template="plotly_white", autosize=True,
+        yaxis=dict(range=[st_filtered['shape_dist_traveled'].min() - 0.02, st_filtered['shape_dist_traveled'].max() + 0.05], tickmode='array', tickvals=st_filtered['shape_dist_traveled'], ticktext=y_tick_texts, gridcolor='lightgray', automargin=True, zeroline=False, tickfont=dict(size=10)),
+        xaxis=dict(zeroline=False, showline=True, showgrid=True, gridcolor='lightgray', dtick=5, ticksuffix=" min", automargin=True, tickfont=dict(size=11)),
+        margin=dict(l=10, r=20, t=60, b=10), legend=dict(font=dict(size=10), itemsizing='constant')
     )
 
     base_title = f"{data['title_info']} | {st.session_state.reliability_window}"
     fig_A.update_layout(**common_layout, title=dict(text=f"{base_title} - Density", font=dict(size=16)), violinmode='overlay', boxmode='overlay', hovermode="closest", showlegend=False)
     fig_B.update_layout(**common_layout, title=dict(text=f"{base_title} - Spaghetti", font=dict(size=16)), hovermode="closest")
     
-    # 4d. Generate Kepler Data
-    # Point Layer
+    # Kepler.gl Data Mapping
     stops_df = st_filtered[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']].copy()
     stops_df['reliability'] = stops_df['stop_id'].map(reliability_vals)
     stops_df['sample_size'] = stops_df['stop_id'].map(sample_sizes)
     
-    # LineString Segments Layer
     segments = []
     for i in range(len(st_filtered) - 1):
-        s1 = st_filtered.iloc[i]
-        s2 = st_filtered.iloc[i+1]
-        geom = LineString([(s1.stop_lon, s1.stop_lat), (s2.stop_lon, s2.stop_lat)])
-        avg_rel = (reliability_vals[s1.stop_id] + reliability_vals[s2.stop_id]) / 2.0
+        s1, s2 = st_filtered.iloc[i], st_filtered.iloc[i+1]
         segments.append({
             'segment': f"{s1.stop_name} to {s2.stop_name}",
-            'avg_reliability': avg_rel,
-            'geometry': geom
+            'avg_reliability': (reliability_vals[s1.stop_id] + reliability_vals[s2.stop_id]) / 2.0,
+            'geometry': LineString([(s2.stop_lon, s2.stop_lat), (s1.stop_lon, s1.stop_lat)]) # Ensure Lon/Lat order
         })
     segments_df = gpd.GeoDataFrame(segments, geometry='geometry', crs=LATLON_PROJ)
 
-    # Basic Kepler Config targeting our fields
     kepler_config = {
         "version": "v1",
         "config": {
             "visState": {
                 "layers": [
-                    {
-                        "type": "geojson",
-                        "config": {
-                            "dataId": "segments",
-                            "label": "Route Segments",
-                            "colorField": {"name": "avg_reliability", "type": "real"},
-                            "colorScale": "quantize",
-                            "visConfig": {"thickness": 5, "colorRange": {"colors": ["#d7191c", "#fdae61", "#ffffbf", "#a6d96a", "#1a9641"]}}
-                        }
-                    },
-                    {
-                        "type": "point",
-                        "config": {
-                            "dataId": "stops",
-                            "label": "Stops",
-                            "colorField": {"name": "reliability", "type": "real"},
-                            "colorScale": "quantize",
-                            "sizeField": {"name": "sample_size", "type": "integer"},
-                            "visConfig": {"radiusRange": [5, 20], "colorRange": {"colors": ["#d7191c", "#fdae61", "#ffffbf", "#a6d96a", "#1a9641"]}}
-                        }
-                    }
+                    {"type": "geojson", "config": {"dataId": "segments", "label": "Route Segments", "colorField": {"name": "avg_reliability", "type": "real"}, "colorScale": "quantize", "visConfig": {"thickness": 5, "colorRange": {"colors": ["#d7191c", "#fdae61", "#ffffbf", "#a6d96a", "#1a9641"]}}}},
+                    {"type": "point", "config": {"dataId": "stops", "label": "Stops", "colorField": {"name": "reliability", "type": "real"}, "colorScale": "quantize", "sizeField": {"name": "sample_size", "type": "integer"}, "visConfig": {"radiusRange": [5, 20], "colorRange": {"colors": ["#d7191c", "#fdae61", "#ffffbf", "#a6d96a", "#1a9641"]}}}}
                 ]
             }
         }
     }
 
-    # Save to Session State
-    st.session_state.analysis_results = {
-        'fig_A': fig_A,
-        'fig_B': fig_B,
-        'stops_df': stops_df,
-        'segments_df': segments_df,
-        'kepler_config': kepler_config
-    }
+    st.session_state.analysis_results = {'fig_A': fig_A, 'fig_B': fig_B, 'stops_df': stops_df, 'segments_df': segments_df, 'kepler_config': kepler_config}
 
 
 # ==============================================================================
@@ -350,8 +303,9 @@ def generate_visuals_and_map():
 st.title("TTC Streetcar Schedule Adherence")
 st.caption("Open-data analysis of TTC streetcar performance versus published GTFS schedules. Developed for the Transit Data Challenge 2026.")
 
-# Load Data Once
-df_hist_global = load_avl_data()
+# Retrieve paths and metadata (Fast, Low Memory)
+parquet_path = get_parquet_path()
+available_routes = get_available_routes(parquet_path)
 stops, trips, stop_times, shapes = load_gtfs()
 stop_times = stop_times.merge(stops[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']], on='stop_id', how='left')
 
@@ -359,15 +313,14 @@ stop_times = stop_times.merge(stops[['stop_id', 'stop_name', 'stop_lat', 'stop_l
 with st.sidebar:
     st.header("1. Route Configuration")
     
-    # Reactive Dropdown: Route
-    available_routes = sorted(df_hist_global['route_id'].dropna().unique())
     selected_route = st.selectbox("Route Selection", available_routes, index=0)
     
-    # Reactive Dropdown: Direction
+    # Reactive Dropdown: Direction based on static GTFS
     gtfs_route_trips = trips[trips['route_id'] == selected_route].copy()
     headsigns = gtfs_route_trips['trip_headsign'].dropna().unique()
     selected_dir = st.selectbox("Direction (Headsign)", headsigns)
     
+    # Invalidate cache/state if route or direction changes
     if selected_route != st.session_state.route_selection or selected_dir != st.session_state.direction_selection:
         st.session_state.route_selection = selected_route
         st.session_state.direction_selection = selected_dir
@@ -379,7 +332,6 @@ with st.sidebar:
     # Reactive Multiselect: Stop Filter
     valid_st_sidebar = stop_times[stop_times['trip_id'].isin(gtfs_route_trips['trip_id'])].copy()
     if not valid_st_sidebar.empty:
-        # Pick a sample trip to get the stop sequence for the filter
         sample_t = valid_st_sidebar['trip_id'].iloc[0]
         sample_stops = valid_st_sidebar[valid_st_sidebar['trip_id'] == sample_t].sort_values('stop_sequence')
         if sample_stops['shape_dist_traveled'].max() > 500:
@@ -389,21 +341,15 @@ with st.sidebar:
         selected_stop_ids = st.multiselect("Stop Filter", options=list(stop_options.keys()), default=list(stop_options.keys()), format_func=lambda x: stop_options[x])
         
         st.session_state.stop_filter_ids = selected_stop_ids
-        # Disable Force t=0 if the very first logical stop of the route is excluded
         first_stop_id = sample_stops.iloc[0]['stop_id']
         st.session_state.force_t0_disabled = first_stop_id not in selected_stop_ids
 
     st.divider()
     st.header("Quick Adjustments")
-    window_choice = st.radio(
-        "On-Time Reliability Window",
-        ["Standard (-15s to +2min)", "Symmetric (-5min to +5min)"],
-        help="Changing this recalculates reliability without rerunning the spatial engine."
-    )
+    window_choice = st.radio("On-Time Reliability Window", ["Standard (-15s to +2min)", "Symmetric (-5min to +5min)"], help="Recalculates reliability without rerunning the spatial engine.")
     if window_choice != st.session_state.reliability_window:
         st.session_state.reliability_window = window_choice
-        generate_visuals_and_map()  # Quick recalc
-
+        generate_visuals_and_map() 
 
 # --- TABS ---
 tab_analysis, tab_map = st.tabs(["📊 Schedule Adherence Analysis", "🗺️ Route Reliability Map"])
@@ -420,31 +366,24 @@ with tab_analysis:
         with col2:
             start_time_input = st.text_input("Start Time (HH:MM)", value="07:00")
             end_time_input = st.text_input("End Time (HH:MM)", value="09:00")
-            force_t0 = st.checkbox(
-                "Force t=0 Start Alignment", 
-                value=False, 
-                disabled=st.session_state.force_t0_disabled,
-                help="Requires the first stop to be included in the Stop Filter."
-            )
+            force_t0 = st.checkbox("Force t=0 Start Alignment", value=False, disabled=st.session_state.force_t0_disabled, help="Requires first stop to be included in the Stop Filter.")
             
         load_sig_btn = st.form_submit_button("Load Signatures")
         
     if load_sig_btn:
-        with st.spinner("Analyzing GTFS Schedules..."):
-            # Filter History
-            df_hist = df_hist_global[df_hist_global['route_id'] == selected_route].copy()
-            if day_type == "Saturdays":
-                day_mask = (df_hist['day_of_week'] == 5) & (~df_hist['is_holiday'])
-            elif day_type == "Sundays & Holidays":
-                day_mask = (df_hist['day_of_week'] == 6) | (df_hist['is_holiday'])
-            else:
-                day_mask = (df_hist['day_of_week'] <= 4) & (~df_hist['is_holiday'])
+        with st.spinner("Extracting & Indexing Historical Data for Route..."):
+            # Execute Memory-Efficient Data Load
+            df_hist = load_route_data(parquet_path, selected_route)
+            
+            if day_type == "Saturdays": day_mask = (df_hist['day_of_week'] == 5) & (~df_hist['is_holiday'])
+            elif day_type == "Sundays & Holidays": day_mask = (df_hist['day_of_week'] == 6) | (df_hist['is_holiday'])
+            else: day_mask = (df_hist['day_of_week'] <= 4) & (~df_hist['is_holiday'])
             df_hist = df_hist[day_mask]
             
             filter_start_sec = parse_user_time(start_time_input, 0)
             filter_end_sec = parse_user_time(end_time_input, 86399)
             
-            # GTFS Analysis
+            # Match GTFS to Data
             historical_trip_ids = df_hist['trip_id'].unique()
             valid_trips = gtfs_route_trips[gtfs_route_trips['trip_id'].isin(historical_trip_ids)]
             
@@ -494,16 +433,10 @@ with tab_analysis:
                 else:
                     st.session_state.signature_list = sig_ui_list
                     st.session_state.signatures_loaded = True
-                    # Store global variables for Stage 2
                     st.session_state.stage2_vars = {
-                        'df_hist': df_hist,
-                        'valid_st': valid_st,
-                        'trip_start_dict': trip_start_dict,
-                        'filter_start_sec': filter_start_sec,
-                        'filter_end_sec': filter_end_sec,
-                        'time_mode': time_mode,
-                        'force_t0': force_t0,
-                        'day_type': day_type,
+                        'df_hist': df_hist, 'valid_st': valid_st, 'trip_start_dict': trip_start_dict,
+                        'filter_start_sec': filter_start_sec, 'filter_end_sec': filter_end_sec,
+                        'time_mode': time_mode, 'force_t0': force_t0, 'day_type': day_type,
                         'time_range_str': f"{start_time_input}-{end_time_input}"
                     }
 
@@ -512,10 +445,7 @@ with tab_analysis:
         with st.form("run_analysis_form"):
             st.subheader("3. Select Signature & Run")
             
-            sig_options = {
-                i: f"({s['runs']} Data Runs) | {format_seconds_to_time(s['min_sec'])} - {format_seconds_to_time(s['max_sec'])} | {s['orig']} -> {s['dest']}" 
-                for i, s in enumerate(st.session_state.signature_list)
-            }
+            sig_options = {i: f"({s['runs']} Data Runs) | {format_seconds_to_time(s['min_sec'])} - {format_seconds_to_time(s['max_sec'])} | {s['orig']} -> {s['dest']}" for i, s in enumerate(st.session_state.signature_list)}
             selected_sig_idx = st.selectbox("Select Signature Window", options=list(sig_options.keys()), format_func=lambda x: sig_options[x])
             
             run_btn = st.form_submit_button("Run Mathematical Pipeline", type="primary")
@@ -523,20 +453,16 @@ with tab_analysis:
         if run_btn:
             with st.spinner("Running Monotonic Sequential Tracker & Spatial Interpolations..."):
                 try:
-                    # Extract Data
                     s2_vars = st.session_state.stage2_vars
-                    df_hist = s2_vars['df_hist']
-                    valid_st = s2_vars['valid_st']
+                    df_hist, valid_st = s2_vars['df_hist'], s2_vars['valid_st']
                     selected_sig = st.session_state.signature_list[selected_sig_idx]
                     matching_trip_ids = selected_sig['t_ids']
                     
-                    # Prepare Stops
                     sample_trip = matching_trip_ids[0]
                     st_filtered = valid_st[valid_st['trip_id'] == sample_trip].copy().sort_values('stop_sequence')
                     if st_filtered['shape_dist_traveled'].max() > 500:
                         st_filtered['shape_dist_traveled'] /= 1000.0
                         
-                    # Apply User Stop Filter
                     if st.session_state.stop_filter_ids:
                         st_filtered = st_filtered[st_filtered['stop_id'].isin(st.session_state.stop_filter_ids)]
                     
@@ -544,13 +470,13 @@ with tab_analysis:
                         st.error("Not enough stops selected in filter to track.")
                         st.stop()
                         
-                    # Track Geometry Projection
+                    # Geometry Projection Setup
                     sample_shape_id = gtfs_route_trips[gtfs_route_trips['trip_id'] == sample_trip]['shape_id'].iloc[0]
                     shp_pts = shapes[shapes['shape_id'] == sample_shape_id].copy().sort_values('shape_pt_sequence')
                     line_coords = list(zip(shp_pts['shape_pt_lon'].astype(float), shp_pts['shape_pt_lat'].astype(float)))
                     target_line_utm = gpd.GeoDataFrame(index=[0], crs=LATLON_PROJ, geometry=[LineString(line_coords)]).to_crs(UTM_PROJ).geometry.iloc[0]
 
-                    # Filter GPS History
+                    # Filter and Cast Coordinate Geography
                     trip_hist = df_hist[df_hist['trip_id'].isin(matching_trip_ids)].copy()
                     trip_hist_gdf = gpd.GeoDataFrame(trip_hist, crs=LATLON_PROJ, geometry=gpd.points_from_xy(trip_hist.longitude, trip_hist.latitude)).to_crs(UTM_PROJ)
                     
@@ -584,8 +510,7 @@ with tab_analysis:
 
                         interpolated_times = np.interp(
                             st_filtered['shape_dist_traveled'].values, 
-                            group['official_dist_km'].values, 
-                            group['op_seconds'].values, left=np.nan, right=np.nan 
+                            group['official_dist_km'].values, group['op_seconds'].values, left=np.nan, right=np.nan 
                         )
 
                         run_interpolations = {stop_id: t for stop_id, t in zip(st_filtered['stop_id'], interpolated_times) if not np.isnan(t)}
@@ -629,29 +554,18 @@ with tab_analysis:
                             time_diff = group['system_time'].diff()
                             group['prev_speed_kmh'] = np.where(time_diff > 0, (dist_diff / time_diff) * 3600, 0)
                             group['prev_speed_kmh'] = group['prev_speed_kmh'].fillna(0).abs()
-                            
                             group['relative_min'] = (group['op_seconds'] - anchor_sec) / 60.0
-                            start_time_str = format_seconds_to_time(list(run_interpolations.values())[0])
                             
                             mode_b_lines.append({
-                                'name': f"{op_date} | {t_id}",
-                                'op_date': str(op_date), 'start_time': start_time_str, 't_id': str(t_id),
+                                'name': f"{op_date} | {t_id}", 'op_date': str(op_date), 'start_time': format_seconds_to_time(list(run_interpolations.values())[0]), 't_id': str(t_id),
                                 'x': group['relative_min'].tolist(), 'y': group['official_dist_km'].tolist(),
                                 'abs_time': group['local_time'].dt.strftime('%I:%M:%S %p').tolist(),
-                                'lat': group['latitude'].tolist(), 'lon': group['longitude'].tolist(),
-                                'speed': group['prev_speed_kmh'].tolist()
+                                'lat': group['latitude'].tolist(), 'lon': group['longitude'].tolist(), 'speed': group['prev_speed_kmh'].tolist()
                             })
 
                     title_info = f"Route {selected_route} | {s2_vars['day_type']} {s2_vars['time_range_str']} | {'Force t=0' if s2_vars['force_t0'] else 'GTFS Aligned'}"
                     
-                    # Store Raw Outputs & Trigger Visual Render
-                    st.session_state.raw_pipeline_data = {
-                        'st_filtered': st_filtered,
-                        'actual_relative_times': actual_relative_times,
-                        'mode_b_lines': mode_b_lines,
-                        'shape_id': sample_shape_id,
-                        'title_info': title_info
-                    }
+                    st.session_state.raw_pipeline_data = {'st_filtered': st_filtered, 'actual_relative_times': actual_relative_times, 'mode_b_lines': mode_b_lines, 'shape_id': sample_shape_id, 'title_info': title_info}
                     generate_visuals_and_map()
                     st.success("Analysis Complete!")
 
@@ -670,18 +584,9 @@ with tab_map:
         st.info("👈 Please configure and run the analysis in the 'Schedule Adherence' tab first.")
     else:
         st.markdown(f"**Data visualized for configuration:** {st.session_state.raw_pipeline_data['title_info']} | {st.session_state.reliability_window}")
-        
-        stops_df = st.session_state.analysis_results['stops_df']
-        segments_df = st.session_state.analysis_results['segments_df']
-        config = st.session_state.analysis_results['kepler_config']
-        
-        map_instance = KeplerGl(height=600, data={"stops": stops_df, "segments": segments_df}, config=config)
+        map_instance = KeplerGl(height=600, data={"stops": st.session_state.analysis_results['stops_df'], "segments": st.session_state.analysis_results['segments_df']}, config=st.session_state.analysis_results['kepler_config'])
         keplergl_static(map_instance, center_map=True)
 
 # --- Privacy Data Statement ---
 st.sidebar.divider()
-st.sidebar.caption(
-    "**Data Privacy Statement:** All data used in this application is strictly open public data "
-    "sourced from the City of Toronto Open Data Portal. AVL data reflects vehicle GPS locations, "
-    "containing zero passenger or Personally Identifiable Information (PII)."
-)
+st.sidebar.caption("**Data Privacy Statement:** All data used in this application is strictly open public data sourced from the City of Toronto Open Data Portal. AVL data reflects vehicle GPS locations, containing zero passenger or Personally Identifiable Information (PII).")
