@@ -1,3 +1,14 @@
+---
+title: TrackTO
+emoji: 🚊
+colorFrom: blue
+colorTo: red
+sdk: streamlit
+sdk_version: 1.35.0
+app_file: app.py
+pinned: false
+---
+
 # ttc-adherence
 © 2026 Neil Simmons. All Rights Reserved.
 This source code is provided publicly solely for the purpose of evaluation for the Transit Data Challenge 2026. No license is granted to any person or entity to copy, modify, distribute, or use this code for any other purpose.
