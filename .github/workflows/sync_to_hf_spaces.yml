@@ -2,21 +2,29 @@ name: Sync to Hugging Face space
 on:
   push:
     branches: [main]
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
 jobs:
   sync-to-hub:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           lfs: true
-      
+
       - name: Push to Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          # Replace 'YOUR_HF_USERNAME' and 'YOUR_SPACE_NAME' below
-          git push --force https://USER:$HF_TOKEN@huggingface.co/spaces/neil-simmons/TrackTO main
+          # 1. Identify yourself to Git (prevents errors during push)
+          git config --global user.email "neil-simmons@users.noreply.github.com"
+          git config --global user.name "neil-simmons"
+
+          # 2. Add the Hugging Face Space as a remote
+          # REPLACE 'neil-simmons' and 'ttc-streetcar-reliability' with your actual HF info
+          git remote add space https://neil-simmons:$HF_TOKEN@huggingface.co/spaces/neil-simmons/TrackTO
+
+          # 3. Force push to the Space
+          # We use 'hf' as the username for the token auth if 'neil-simmons' fails
+          git push --force space main
