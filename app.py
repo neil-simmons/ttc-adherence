@@ -785,9 +785,12 @@ with tab_analysis:
 
                             dist_diff = group['official_dist_km'].diff()
                             time_diff = group['system_time'].diff()
+                            
+                            # FIXED BUG: numpy arrays use .clip(min=...) instead of pandas syntax .clip(lower=...)
                             group['prev_speed_kmh'] = np.where(
                                 time_diff > 0, (dist_diff / time_diff) * 3600, 0
-                            ).clip(lower=0)
+                            ).clip(min=0)
+                            
                             group['relative_min'] = (group['op_seconds'] - anchor_sec) / 60.0
 
                             abs_time_series = (
