@@ -8,6 +8,8 @@ import plotly.graph_objects as go
 import gc
 import threading
 import json
+import datetime
+import streamlit.components.v1 as components
 from huggingface_hub import hf_hub_download
 from streamlit_keplergl import keplergl_static
 from keplergl import KeplerGl
@@ -28,6 +30,16 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+
+# MOBILE WARNING CSS INJECTION
+st.markdown("""
+<style>
+.mobile-warning { display: none; background-color: #ffcccc; color: #900; padding: 12px; border-left: 6px solid #DA251D; margin-bottom: 15px; font-size: 14px; border-radius: 4px; }
+@media (max-width: 768px) { .mobile-warning { display: block; } }
+</style>
+<div class="mobile-warning">⚠️ <b>Mobile Device Detected:</b> This dashboard includes extremely dense data visualizations. Please open on a desktop computer for the best experience with the Time-Distance and Density charts.</div>
+""", unsafe_allow_html=True)
+
 
 HF_REPO      = "neil-simmons/ttc-avl-data"
 HF_REPO_TYPE = "dataset"
@@ -54,23 +66,11 @@ TTC_RED = "#DA251D"
 def get_network_lock():
     return threading.Lock()
 
-defaults = {
-    'signatures_loaded':  False,
-    'signature_list':     [],
-    'selected_signature': None,
-    'raw_pipeline_data':  None,
-    'analysis_results':   None,
-    'stop_filter_ids':    None,
-    'force_t0_disabled':  False,
-    'reliability_window': 'Standard (-15s to +2min)',
-    'route_selection':    None,
-    'direction_selection': None,
-    'stage2_vars':        None,
-    'show_settings':      False,
-}
-for key, val in defaults.items():
-    if key not in st.session_state:
-        st.session_state[key] = val
+# Ensure session state defaults
+if 'analysis_results' not in st.session_state: st.session_state.analysis_results = None
+if 'raw_pipeline_data' not in st.session_state: st.session_state.raw_pipeline_data = None
+if 'show_settings' not in st.session_state: st.session_state.show_settings = False
+if 'run_trigger' not in st.session_state: st.session_state.run_trigger = False
 
 # ==============================================================================
 # 2. DATA LOADERS
@@ -185,16 +185,38 @@ def load_gtfs():
 # ==============================================================================
 # 3. HELPER FUNCTIONS & KEPLER CONFIG
 # ==============================================================================
+def render_plotly_with_gmaps_click(fig, height=900):
+    """Renders Plotly HTML with injected JS to open Google Maps on point click."""
+    html_bytes = fig.to_html(include_plotlyjs="require", full_html=True)
+    
+    js_inject = """
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        var waitForPlotly = setInterval(function() {
+            var plots = document.getElementsByClassName('plotly-graph-div');
+            if (plots.length > 0 && plots[0].on) {
+                clearInterval(waitForPlotly);
+                plots[0].on('plotly_click', function(data){
+                    if(data.points && data.points[0].customdata) {
+                        var lat = data.points[0].customdata[4];
+                        var lon = data.points[0].customdata[5];
+                        if (lat && lon) {
+                            window.open('https://www.google.com/maps/search/?api=1&query=' + lat + ',' + lon, '_blank');
+                        }
+                    }
+                });
+            }
+        }, 500);
+    });
+    </script>
+    """
+    final_html = html_bytes.replace('</body>', js_inject + '</body>')
+    components.html(final_html, height=height)
+
 def parse_gtfs_time(time_str):
     if pd.isna(time_str): return np.nan
     h, m, s = map(int, time_str.split(':'))
     return h * 3600 + m * 60 + s
-
-def parse_user_time(time_str, default_sec):
-    try:
-        h, m = map(int, time_str.split(':'))
-        return h * 3600 + m * 60
-    except Exception: return default_sec
 
 def format_seconds_to_time(seconds):
     if pd.isna(seconds) or seconds < 0: return "N/A"
@@ -212,172 +234,81 @@ def load_precomputed_network():
     except Exception: return None 
 
 def inject_legend_anchors(stops_df, segments_df):
-    """Silently forces Kepler's dynamic quantize scale to permanently map 0 to 100."""
     if stops_df.empty or segments_df.empty: return stops_df, segments_df
-    
-    # Add dummy 0% and 100% points exactly underneath the first real point so they are invisible
-    d_stop_0 = stops_df.iloc[0].copy()
-    d_stop_0['reliability'] = 0.0
-    d_stop_0['sample_size'] = 0
-    
-    d_stop_100 = stops_df.iloc[0].copy()
-    d_stop_100['reliability'] = 100.0
-    d_stop_100['sample_size'] = 0
-    
+    d_stop_0, d_stop_100 = stops_df.iloc[0].copy(), stops_df.iloc[0].copy()
+    d_stop_0['reliability'], d_stop_0['sample_size'] = 0.0, 0
+    d_stop_100['reliability'], d_stop_100['sample_size'] = 100.0, 0
     s_df = pd.concat([stops_df, pd.DataFrame([d_stop_0, d_stop_100])], ignore_index=True)
     
-    d_seg_0 = segments_df.iloc[0].copy()
-    d_seg_0['avg_reliability'] = 0.0
-    
-    d_seg_100 = segments_df.iloc[0].copy()
-    d_seg_100['avg_reliability'] = 100.0
-    
+    d_seg_0, d_seg_100 = segments_df.iloc[0].copy(), segments_df.iloc[0].copy()
+    d_seg_0['avg_reliability'], d_seg_100['avg_reliability'] = 0.0, 100.0
     seg_df = pd.concat([segments_df, gpd.GeoDataFrame([d_seg_0, d_seg_100], geometry='geometry', crs=LATLON_PROJ)], ignore_index=True)
-    
     return s_df, seg_df
 
 def generate_kepler_config():
-    # Exactly 20 colours bridging TTC Red -> Yellow -> Green (Creates perfect 5% bins via quantize)
     custom_20_colors = [
         "#DA251D", "#E03920", "#E54E23", "#EB6326", "#F07729", 
         "#F58C2C", "#FBA02F", "#FFB532", "#FFCA35", "#FFDE38", 
         "#F2E43B", "#D8DB3D", "#BED240", "#A3C942", "#89C045", 
         "#6FB747", "#54AE4A", "#3AA54C", "#209C4F", "#1A9641"
     ]
-    
-    color_scale_config = {
-        "name": "TTC_Scale",
-        "type": "custom",
-        "category": "Custom",
-        "colors": custom_20_colors
-    }
-    
+    color_scale_config = {"name": "TTC_Scale", "type": "custom", "category": "Custom", "colors": custom_20_colors}
     return {
         "version": "v1",
         "config": {
             "visState": {
                 "layers": [
                     {
-                        "id": "segments",
-                        "type": "geojson",
+                        "id": "segments", "type": "geojson",
                         "config": {
-                            "dataId": "segments",
-                            "label": "Route Segments",
-                            "columns": {"geojson": "geometry"},
-                            "isVisible": True,
-                            "visConfig": {
-                                "opacity": 1.0,
-                                "strokeOpacity": 1.0,
-                                "thickness": 1.0,
-                                "strokeColor": None,
-                                "colorRange": color_scale_config,
-                                "strokeColorRange": color_scale_config
-                            }
+                            "dataId": "segments", "label": "Route Segments", "columns": {"geojson": "geometry"}, "isVisible": True,
+                            "visConfig": {"opacity": 1.0, "strokeOpacity": 1.0, "thickness": 2.0, "strokeColor": None, "colorRange": color_scale_config, "strokeColorRange": color_scale_config}
                         },
-                        "visualChannels": {
-                            "colorField": {"name": "avg_reliability", "type": "real"},
-                            "colorScale": "quantize",
-                            "strokeColorField": {"name": "avg_reliability", "type": "real"},
-                            "strokeColorScale": "quantize"
-                        }
+                        "visualChannels": {"colorField": {"name": "avg_reliability", "type": "real"}, "colorScale": "quantize", "strokeColorField": {"name": "avg_reliability", "type": "real"}, "strokeColorScale": "quantize"}
                     },
                     {
-                        "id": "stops",
-                        "type": "point",
+                        "id": "stops", "type": "point",
                         "config": {
-                            "dataId": "stops",
-                            "label": "Stops",
-                            "columns": {"lat": "stop_lat", "lng": "stop_lon"},
-                            "isVisible": True,
-                            "visConfig": {
-                                "radiusRange": [3, 9],
-                                "opacity": 1.0,
-                                "filled": True,          # <--- FIX: Forces the points to have a solid background
-                                "outline": True,
-                                "thickness": 1.5,
-                                "strokeColor": [255, 255, 255], 
-                                "colorRange": color_scale_config
-                            }
+                            "dataId": "stops", "label": "Stops", "columns": {"lat": "stop_lat", "lng": "stop_lon"}, "isVisible": True,
+                            "visConfig": {"radiusRange": [3, 9], "opacity": 1.0, "filled": True, "outline": True, "thickness": 1.5, "strokeColor": [255, 255, 255], "colorRange": color_scale_config}
                         },
-                        "visualChannels": {
-                            "colorField": {"name": "reliability", "type": "real"},
-                            "colorScale": "quantize",
-                            "sizeField": {"name": "sample_size", "type": "integer"},
-                            "sizeScale": "linear"
-                        }
+                        "visualChannels": {"colorField": {"name": "reliability", "type": "real"}, "colorScale": "quantize", "sizeField": {"name": "sample_size", "type": "integer"}, "sizeScale": "linear"}
                     }
                 ],
-                # FIX: In Kepler config, index 0 is the TOP visual layer. 
                 "layerOrder": ["stops", "segments"],
                 "interactionConfig": {
                     "tooltip": {
                         "fieldsToShow": {
-                            "segments": [
-                                {"name": "segment", "format": None}, 
-                                {"name": "route_id", "format": None}, 
-                                {"name": "avg_reliability", "format": ".1f"}
-                            ],
-                            "stops": [
-                                {"name": "stop_name", "format": None},
-                                {"name": "route_id", "format": None}, 
-                                {"name": "reliability", "format": ".1f"}
-                            ]
+                            "segments": [{"name": "segment", "format": None}, {"name": "route_id", "format": None}, {"name": "avg_reliability", "format": ".1f"}],
+                            "stops": [{"name": "stop_name", "format": None}, {"name": "route_id", "format": None}, {"name": "reliability", "format": ".1f"}]
                         },
                         "enabled": True
                     }
                 }
             },
-            "mapStyle": {
-                "styleType": "muted_night"
-            }
+            "mapStyle": {"styleType": "muted_night"}
         }
     }
 
 # ==============================================================================
 # 4. MODULARIZED PIPELINE FUNCTIONS
 # ==============================================================================
-def get_route_signatures(df_hist, valid_trips, stop_times, stops, filter_start_sec, filter_end_sec):
-    valid_st = stop_times[stop_times['trip_id'].isin(valid_trips['trip_id'])].copy()
-    valid_st = valid_st.merge(stops, on='stop_id', how='left')
-    valid_st['arrival_sec'] = valid_st['arrival_time'].apply(parse_gtfs_time)
-    start_times_series = valid_st.groupby('trip_id')['arrival_sec'].transform('min')
-    valid_st['relative_sec'] = valid_st['arrival_sec'] - start_times_series
-    valid_st = valid_st.sort_values(['trip_id', 'stop_sequence'])
-
-    signatures_dict = {}
-    for t_id, df_group in valid_st.groupby('trip_id', observed=True):
-        sig = tuple(zip(df_group['stop_id'], df_group['relative_sec']))
-        if not sig: continue
-        if sig not in signatures_dict: signatures_dict[sig] = []
-        signatures_dict[sig].append(t_id)
-
-    first_stops = valid_st.groupby('trip_id', observed=True).first().reset_index()
-    last_stops = valid_st.groupby('trip_id', observed=True).last().reset_index()
-    trip_start_dict = dict(zip(first_stops['trip_id'], first_stops['arrival_sec']))
-    trip_orig_dict = dict(zip(first_stops['trip_id'], first_stops['stop_name']))
-    trip_dest_dict = dict(zip(last_stops['trip_id'], last_stops['stop_name']))
-    trip_hist_counts = df_hist.groupby('trip_id', observed=True)['op_date'].nunique().to_dict()
-
-    sig_ui_list = []
-    for sig, t_ids in signatures_dict.items():
-        hist_run_count = sum(trip_hist_counts.get(tid, 0) for tid in t_ids)
-        if hist_run_count == 0: continue
-        start_secs = [trip_start_dict[tid] for tid in t_ids]
-        min_s, max_s = min(start_secs), max(start_secs)
-        if max_s < filter_start_sec or min_s > filter_end_sec: continue
-        sig_ui_list.append({'signature': sig, 't_ids': t_ids, 'orig': trip_orig_dict[t_ids[0]], 'dest': trip_dest_dict[t_ids[0]], 'stops': len(sig), 'min_sec': min_s, 'max_sec': max_s, 'runs': hist_run_count})
-
-    return sorted(sig_ui_list, key=lambda x: x['min_sec']), trip_start_dict
-
-def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtfs_route_trips, shapes, stop_filter_ids=None):
-    if s2_vars['day_type'] == "Saturdays":
-        day_mask = (df_hist_raw['day_of_week'] == 5) & (~df_hist_raw['is_holiday'])
-    elif s2_vars['day_type'] == "Sundays & Holidays":
-        day_mask = (df_hist_raw['day_of_week'] == 6) | (df_hist_raw['is_holiday'])
+def apply_day_filters(df, days_selected):
+    """Maps custom string selections to GTFS date representations."""
+    day_mapping = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3, "Friday": 4, "Saturday": 5, "Sunday": 6}
+    selected_dow = [day_mapping[d] for d in days_selected if d != "Holiday"]
+    
+    day_mask = df['day_of_week'].isin(selected_dow)
+    
+    if "Holiday" in days_selected:
+        day_mask = day_mask | df['is_holiday']
     else:
-        day_mask = (df_hist_raw['day_of_week'] <= 4) & (~df_hist_raw['is_holiday'])
+        day_mask = day_mask & (~df['is_holiday'])
+        
+    return df[day_mask]
 
-    df_hist_filtered = df_hist_raw[day_mask]
+def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtfs_route_trips, shapes):
+    df_hist_filtered = apply_day_filters(df_hist_raw, s2_vars['days_selected'])
     trip_hist        = df_hist_filtered[df_hist_filtered['trip_id'].isin(matching_trip_ids)].copy()
 
     valid_st_stage2 = stop_times[stop_times['trip_id'].isin(matching_trip_ids)].copy()
@@ -390,8 +321,8 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
     st_filtered = valid_st_stage2[valid_st_stage2['trip_id'] == sample_trip].copy().sort_values('stop_sequence')
     if st_filtered['shape_dist_traveled'].max() > 500: st_filtered['shape_dist_traveled'] /= 1000.0
 
-    if stop_filter_ids:
-        st_filtered = st_filtered[st_filtered['stop_id'].isin(stop_filter_ids)]
+    if s2_vars['stop_filter_ids']:
+        st_filtered = st_filtered[st_filtered['stop_id'].isin(s2_vars['stop_filter_ids'])]
 
     if len(st_filtered) < 2: return None
 
@@ -469,58 +400,35 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
     return {'st_filtered': st_filtered, 'actual_relative_times': actual_relative_times, 'mode_b_lines': mode_b_lines, 'shape_id': sample_shape_id}
 
 def build_spatial_data(st_filtered, actual_relative_times, window_early, window_late, shapes, shape_id, route_id, route_idx):
-    """
-    Builds the geometry. 
-    Crucial Fix: Offsets the continuous GTFS line FIRST (so segments perfectly touch without cracks).
-    Then it mathematically snaps the Stops directly onto this new offset line so they align perfectly.
-    """
     reliability_dict, reliability_vals, sample_sizes = {}, {}, {}
-    
     for stop in st_filtered.itertuples():
         arr = actual_relative_times[stop.stop_id]
         sample_sizes[stop.stop_id] = len(arr)
         if not arr:
-            reliability_dict[stop.stop_id] = "N/A"
-            reliability_vals[stop.stop_id] = 0.0
+            reliability_dict[stop.stop_id], reliability_vals[stop.stop_id] = "N/A", 0.0
             continue
         sched_sec = stop.relative_sec
         hits = sum(1 for t in arr if window_early <= (t - sched_sec) <= window_late)
         pct  = (hits / len(arr)) * 100
-        reliability_dict[stop.stop_id] = f"{pct:.1f}%"
-        reliability_vals[stop.stop_id] = pct
+        reliability_dict[stop.stop_id], reliability_vals[stop.stop_id] = f"{pct:.1f}%", pct
 
-    # 1. BUILD CONTINUOUS BASELINE
     shp_pts = shapes[shapes['shape_id'] == shape_id].sort_values('shape_pt_sequence')
     shape_coords = list(zip(shp_pts['shape_pt_lon'].astype(float), shp_pts['shape_pt_lat'].astype(float)))
     full_route_line = LineString(shape_coords) if len(shape_coords) > 1 else None
 
-    # 2. OFFSET CONTINUOUS BASELINE (Eliminates cracks and naturally separates Eastbound vs Westbound)
     if full_route_line:
-        # Shift base line by 5 meters + 8 meters per concurrent route to prevent overlapping tracks
         offset_meters = 5.0 + (route_idx * 8.0)
         try:
-            # Project to UTM for accurate meter-based operations without degree distortion
             gs = gpd.GeoSeries([full_route_line], crs=LATLON_PROJ).to_crs(UTM_PROJ)
-            
-            # Apply parallel_offset using join_style=2 (mitre) for crisp road corners
             gs_offset = gs.geometry.apply(lambda geom: geom.parallel_offset(offset_meters, 'right', join_style=2))
-            
             if not gs_offset.empty and not gs_offset.iloc[0].is_empty:
-                # Project back to WGS84 Lat/Lon
                 offset_geom = gs_offset.to_crs(LATLON_PROJ).iloc[0]
-                
-                # Resolve MultiLineStrings if tight corners broke the continuous line
                 if offset_geom.geom_type == 'MultiLineString':
                     offset_geom = linemerge(offset_geom)
-                    if offset_geom.geom_type == 'MultiLineString':
-                        # Fallback: take the longest contiguous track piece
-                        offset_geom = max(offset_geom.geoms, key=lambda x: x.length)
-                        
+                    if offset_geom.geom_type == 'MultiLineString': offset_geom = max(offset_geom.geoms, key=lambda x: x.length)
                 full_route_line = offset_geom
-        except Exception:
-            pass
+        except Exception: pass
 
-    # 3. BUILD STOPS AND SNAP THEM TO OFFSET LINE
     offset_stops = []
     for stop in st_filtered.itertuples():
         orig_pt = Point(float(stop.stop_lon), float(stop.stop_lat))
@@ -528,44 +436,23 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
             proj_dist = full_route_line.project(orig_pt)
             new_pt = full_route_line.interpolate(proj_dist)
             new_lon, new_lat = new_pt.x, new_pt.y
-        else:
-            new_lon, new_lat = orig_pt.x, orig_pt.y
+        else: new_lon, new_lat = orig_pt.x, orig_pt.y
             
-        offset_stops.append({
-            'route_id': route_id,
-            'stop_id': stop.stop_id,
-            'stop_name': stop.stop_name,
-            'stop_lat': new_lat,
-            'stop_lon': new_lon,
-            'reliability': reliability_vals[stop.stop_id],
-            'sample_size': sample_sizes[stop.stop_id]
-        })
-        
+        offset_stops.append({'route_id': route_id, 'stop_id': stop.stop_id, 'stop_name': stop.stop_name, 'stop_lat': new_lat, 'stop_lon': new_lon, 'reliability': reliability_vals[stop.stop_id], 'sample_size': sample_sizes[stop.stop_id]})
     stops_df = pd.DataFrame(offset_stops)
 
-    # 4. CHOP OFFSET LINE INTO SEGMENTS
     segments = []
     for i in range(len(st_filtered) - 1):
         s1, s2 = st_filtered.iloc[i], st_filtered.iloc[i + 1]
         if s1.stop_lon == s2.stop_lon and s1.stop_lat == s2.stop_lat: continue
-        
         geom = None
         if full_route_line and not full_route_line.is_empty:
             d1 = full_route_line.project(Point(float(s1.stop_lon), float(s1.stop_lat)))
             d2 = full_route_line.project(Point(float(s2.stop_lon), float(s2.stop_lat)))
             start_d, end_d = min(d1, d2), max(d1, d2)
-            if end_d > start_d:
-                geom = substring(full_route_line, start_d, end_d)
-                
-        if geom is None or geom.is_empty:
-            geom = LineString([(float(s1.stop_lon), float(s1.stop_lat)), (float(s2.stop_lon), float(s2.stop_lat))])
-            
-        segments.append({
-            'route_id': route_id,
-            'segment': f"{s1.stop_name} to {s2.stop_name}",
-            'avg_reliability': (reliability_vals[s1.stop_id] + reliability_vals[s2.stop_id]) / 2.0,
-            'geometry': geom
-        })
+            if end_d > start_d: geom = substring(full_route_line, start_d, end_d)
+        if geom is None or geom.is_empty: geom = LineString([(float(s1.stop_lon), float(s1.stop_lat)), (float(s2.stop_lon), float(s2.stop_lat))])
+        segments.append({'route_id': route_id, 'segment': f"{s1.stop_name} to {s2.stop_name}", 'avg_reliability': (reliability_vals[s1.stop_id] + reliability_vals[s2.stop_id]) / 2.0, 'geometry': geom})
         
     segments_df = gpd.GeoDataFrame(segments, geometry='geometry', crs=LATLON_PROJ) if segments else gpd.GeoDataFrame()
     return stops_df, segments_df, reliability_dict, reliability_vals
@@ -573,36 +460,34 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
 # ==============================================================================
 # 5. EXECUTION PIPELINES
 # ==============================================================================
-def execute_single_route_pipeline(selected_sig_idx, parquet_path, selected_route, gtfs_route_trips, stop_times, stops, shapes):
-    s2_vars = st.session_state.stage2_vars
-    selected_sig = st.session_state.signature_list[selected_sig_idx]
-    
+def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2_vars, gtfs_route_trips, stop_times, stops, shapes):
     df_hist_raw = load_route_data(parquet_path, selected_route)
-    raw_data = run_tracking(df_hist_raw, selected_sig['t_ids'], s2_vars, stop_times, stops, gtfs_route_trips, shapes, st.session_state.stop_filter_ids)
+    
+    trip_list = s2_vars['isolated_trips'] if s2_vars['isolated_trips'] else gtfs_route_trips['trip_id'].unique()
+    
+    valid_st = stop_times[stop_times['trip_id'].isin(trip_list)].copy()
+    valid_st = valid_st.merge(stops, on='stop_id', how='left')
+    valid_st['arrival_sec'] = valid_st['arrival_time'].apply(parse_gtfs_time)
+    
+    trip_start_dict = valid_st.groupby('trip_id', observed=True)['arrival_sec'].min().to_dict()
+    s2_vars['trip_start_dict'] = trip_start_dict
+    
+    raw_data = run_tracking(df_hist_raw, trip_list, s2_vars, stop_times, stops, gtfs_route_trips, shapes)
     
     if not raw_data:
-        st.error("Tracking failed or no matching data.")
-        return
+        st.error("Tracking failed or no matching data found for these criteria.")
+        return False
 
-    title_info = f"Route {selected_route} | {s2_vars['day_type']} {s2_vars['time_range_str']} | {'Force t=0' if s2_vars['force_t0'] else 'GTFS Aligned'}"
-    raw_data['title_info'] = title_info
+    # Dynamic Title Generation
+    t_str = f"Route {selected_route} {selected_dir} | {s2_vars['days_summary']} | {s2_vars['time_range_str']} | Window: {s2_vars['window_early']}s to +{s2_vars['window_late']}s"
+    if s2_vars['force_t0']: t_str += " | t=0 Aligned"
+    if s2_vars['isolated_trips']: t_str += f" | Filtered to {len(s2_vars['isolated_trips'])} Trips"
+    raw_data['title_info'] = t_str
     st.session_state.raw_pipeline_data = raw_data
     
-    is_standard  = st.session_state.reliability_window.startswith('Standard')
-    window_early = -15 if is_standard else -300
-    window_late  = 120 if is_standard else  300
-    
     stops_df, segments_df, reliability_dict, reliability_vals = build_spatial_data(
-        raw_data['st_filtered'], 
-        raw_data['actual_relative_times'], 
-        window_early, 
-        window_late,
-        shapes,
-        raw_data['shape_id'],
-        selected_route,
-        0
+        raw_data['st_filtered'], raw_data['actual_relative_times'], s2_vars['window_early'], s2_vars['window_late'], shapes, raw_data['shape_id'], selected_route, 0
     )
-    
     stops_df, segments_df = inject_legend_anchors(stops_df, segments_df)
     
     fig_A = go.Figure()
@@ -612,10 +497,10 @@ def execute_single_route_pipeline(selected_sig_idx, parquet_path, selected_route
         N = len(offsets_arr)
         if N == 0: continue
         times_min = [round(t / 60.0, 1) for t in offsets_arr]
-        
         c_base, c_fill, c_box = (TTC_RED, 'rgba(218,37,29,0.4)', 'rgba(218,37,29,0.1)') if N < 10 else ('goldenrod', 'rgba(218,165,32,0.4)', 'rgba(218,165,32,0.1)') if N < 25 else ('#1f77b4', 'rgba(31,119,180,0.4)', 'rgba(31,119,180,0.1)')
         
-        fig_A.add_trace(go.Violin(x=times_min, y=np.repeat(stop.shape_dist_traveled, N), orientation='h', side='positive', scalemode='count', line_color=c_base, fillcolor=c_fill, showlegend=False, points=False, box_visible=False))
+        # spanmode='hard' forces lines to stop at the whiskers
+        fig_A.add_trace(go.Violin(x=times_min, y=np.repeat(stop.shape_dist_traveled, N), orientation='h', side='positive', scalemode='count', spanmode='hard', line_color=c_base, fillcolor=c_fill, showlegend=False, points=False, box_visible=False))
         fig_A.add_trace(go.Box(x=times_min, y=np.repeat(stop.shape_dist_traveled - 0.05, N), orientation='h', line_color=c_base, fillcolor=c_box, boxpoints='outliers', showlegend=False))
 
     fig_B = go.Figure()
@@ -628,18 +513,13 @@ def execute_single_route_pipeline(selected_sig_idx, parquet_path, selected_route
     fig_A.add_trace(sched_trace)
     fig_B.add_trace(sched_trace)
     
-    common_layout = dict(yaxis_title="Official Track Distance (km) & Stops", template="plotly_white", yaxis=dict(tickmode='array', tickvals=raw_data['st_filtered']['shape_dist_traveled'], ticktext=y_tick_texts))
-    fig_A.update_layout(**common_layout, title=f"{title_info} — Density", violinmode='overlay', boxmode='overlay')
-    fig_B.update_layout(**common_layout, title=f"{title_info} — Spaghetti")
+    # Increased height to 900
+    common_layout = dict(height=900, yaxis_title="Official Track Distance (km) & Stops", template="plotly_white", yaxis=dict(tickmode='array', tickvals=raw_data['st_filtered']['shape_dist_traveled'], ticktext=y_tick_texts))
+    fig_A.update_layout(**common_layout, title=f"{t_str} — Density", violinmode='overlay', boxmode='overlay')
+    fig_B.update_layout(**common_layout, title=f"{t_str} — Time-Distance")
 
-    st.session_state.analysis_results = {
-        'is_multi': False, 
-        'fig_A': fig_A, 
-        'fig_B': fig_B, 
-        'stops_df': stops_df, 
-        'segments_df': segments_df, 
-        'kepler_config': generate_kepler_config()
-    }
+    st.session_state.analysis_results = {'is_multi': False, 'fig_A': fig_A, 'fig_B': fig_B, 'stops_df': stops_df, 'segments_df': segments_df, 'kepler_config': generate_kepler_config()}
+    return True
 
 def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_times, stops, shapes, s2_vars):
     lock = get_network_lock()
@@ -649,13 +529,7 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
         
     try:
         all_stops, all_segments = [], []
-        is_standard  = st.session_state.reliability_window.startswith('Standard')
-        window_early = -15 if is_standard else -300
-        window_late  = 120 if is_standard else  300
-
         progress_bar = st.progress(0)
-        
-        # Base Route map for determining spatial offsets
         unique_routes = sorted(list(set([c.split(' | ')[0] for c in selected_combos])))
         route_idx_map = {r: i for i, r in enumerate(unique_routes)}
         
@@ -667,34 +541,19 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
             gtfs_route_trips = trips[(trips['route_id'] == route) & (trips['trip_headsign'] == direction)]
             df_hist = load_route_data(parquet_path, route)
             
-            if s2_vars['day_type'] == "Saturdays": day_mask = (df_hist['day_of_week'] == 5) & (~df_hist['is_holiday'])
-            elif s2_vars['day_type'] == "Sundays & Holidays": day_mask = (df_hist['day_of_week'] == 6) | (df_hist['is_holiday'])
-            else: day_mask = (df_hist['day_of_week'] <= 4) & (~df_hist['is_holiday'])
-            df_hist = df_hist[day_mask]
+            valid_st = stop_times[stop_times['trip_id'].isin(gtfs_route_trips['trip_id'])].copy()
+            valid_st = valid_st.merge(stops, on='stop_id', how='left')
+            valid_st['arrival_sec'] = valid_st['arrival_time'].apply(parse_gtfs_time)
+            s2_vars['trip_start_dict'] = valid_st.groupby('trip_id', observed=True)['arrival_sec'].min().to_dict()
             
-            valid_trips = gtfs_route_trips[gtfs_route_trips['trip_id'].isin(df_hist['trip_id'].unique())]
-            if valid_trips.empty: continue
-
-            sig_list, trip_start_dict = get_route_signatures(df_hist, valid_trips, stop_times, stops, s2_vars['filter_start_sec'], s2_vars['filter_end_sec'])
-            if not sig_list: continue
-            s2_vars['trip_start_dict'] = trip_start_dict
+            raw_data = run_tracking(df_hist, gtfs_route_trips['trip_id'].unique(), s2_vars, stop_times, stops, gtfs_route_trips, shapes)
+            if not raw_data: continue
             
-            for sig in sig_list:
-                raw_data = run_tracking(df_hist, sig['t_ids'], s2_vars, stop_times, stops, gtfs_route_trips, shapes)
-                if not raw_data: continue
-                
-                stops_df, segments_df, _, _ = build_spatial_data(
-                    raw_data['st_filtered'], 
-                    raw_data['actual_relative_times'], 
-                    window_early, 
-                    window_late,
-                    shapes,
-                    raw_data['shape_id'],
-                    route, # Grouping by Base Route (Short turns merge! Opposing directions auto-offset!)
-                    route_idx
-                )
-                all_stops.append(stops_df)
-                all_segments.append(segments_df)
+            stops_df, segments_df, _, _ = build_spatial_data(
+                raw_data['st_filtered'], raw_data['actual_relative_times'], s2_vars['window_early'], s2_vars['window_late'], shapes, raw_data['shape_id'], route, route_idx
+            )
+            all_stops.append(stops_df)
+            all_segments.append(segments_df)
             
         progress_bar.empty()
         
@@ -704,7 +563,6 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
             
         master_stops = pd.concat(all_stops, ignore_index=True)
         master_stops['rel_weighted'] = master_stops['reliability'] * master_stops['sample_size']
-        # Group by Route ID allows separate routes to maintain their own physical dots on their specific track line
         master_stops = master_stops.groupby(['route_id', 'stop_id', 'stop_name', 'stop_lat', 'stop_lon'], as_index=False, observed=True).agg({'rel_weighted': 'sum', 'sample_size': 'sum'})
         master_stops['reliability'] = np.where(master_stops['sample_size'] > 0, master_stops['rel_weighted'] / master_stops['sample_size'], 0)
         master_stops.drop(columns=['rel_weighted'], inplace=True)
@@ -718,15 +576,10 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
             
         master_stops, master_segments = inject_legend_anchors(master_stops, master_segments)
         
-        st.session_state.raw_pipeline_data = {'title_info': f"Multi-Route Analysis | {s2_vars['day_type']} {s2_vars['time_range_str']}"}
-        st.session_state.analysis_results = {
-            'is_multi': True, 
-            'stops_df': master_stops, 
-            'segments_df': master_segments, 
-            'kepler_config': generate_kepler_config()
-        }
+        t_str = f"Multi-Route Analysis | {s2_vars['days_summary']} | {s2_vars['time_range_str']} | Window: {s2_vars['window_early']}s to +{s2_vars['window_late']}s"
+        st.session_state.raw_pipeline_data = {'title_info': t_str}
+        st.session_state.analysis_results = {'is_multi': True, 'stops_df': master_stops, 'segments_df': master_segments, 'kepler_config': generate_kepler_config()}
         return True
-        
     finally:
         lock.release()
 
@@ -734,111 +587,95 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
 # 6. FILTER SETTINGS PANEL
 # ==============================================================================
 def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops, shapes):
-    st.markdown("Configure your parameters below. Click **Apply & Run Analysis** to update the tabs.")
+    st.markdown("Configure your parameters below. Click **Apply & Run Analysis** to calculate metrics and update charts.")
     
     col_a, col_b = st.columns(2)
-    with col_b:
-        st.subheader("Time & Date Configuration")
-        global day_type 
-        day_type = st.radio("Day Type", ["Weekdays", "Saturdays", "Sundays & Holidays"])
-        time_mode = st.radio("Time Application Mode", ["Trip Start Mode", "Overlap Mode"])
-        
-        c1, c2 = st.columns(2)
-        start_time_input = c1.text_input("Start Time (HH:MM)", value="07:00")
-        end_time_input   = c2.text_input("End Time (HH:MM)", value="09:00")
-        force_t0 = st.checkbox("Force t=0 Start Alignment", value=False, disabled=st.session_state.force_t0_disabled)
-        window_choice = st.radio("On-Time Reliability Window", ["Standard (-15s to +2min)", "Symmetric (-5min to +5min)"])
-        st.session_state.reliability_window = window_choice
-
+    
+    # Defaults in session state
+    if "days_selected" not in st.session_state: st.session_state.days_selected = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    if "time_slider" not in st.session_state: st.session_state.time_slider = (datetime.time(7, 0), datetime.time(9, 0))
+    if "window_slider" not in st.session_state: st.session_state.window_slider = (-15, 120)
+    if "time_mode" not in st.session_state: st.session_state.time_mode = "Overlap Mode"
+    if "force_t0" not in st.session_state: st.session_state.force_t0 = False
+    
     with col_a:
-        st.subheader("Route Selection")
-        adv_mode = st.toggle("Advanced: Multi-Route Analysis")
+        st.subheader("1. Route Selection")
+        adv_mode = st.toggle("Advanced: Multi-Route Analysis", key="adv_mode")
         
         if adv_mode:
-            st.warning("⚠️ **Resource Intensive:** Calculating the entire network is heavy. This will disable the Spaghetti and Density charts.")
             all_options = get_all_route_directions(trips, available_routes)
-            selected_combos = st.multiselect("Select Routes & Directions", options=all_options, default=all_options[:2])
-            ack = st.checkbox("I understand this may take 1-3 minutes.")
+            selected_combos = st.multiselect("Select Routes & Directions", options=all_options, default=all_options[:2], key="multi_routes")
+            st.info("⚠️ Calculating the entire network may take 1-3 minutes. Detailed charts will be disabled.")
             
-            if st.button("🚀 Apply & Run Network Analysis", type="primary", use_container_width=True, disabled=not ack):
-                s2_vars = {
-                    'filter_start_sec': parse_user_time(start_time_input, 0),
-                    'filter_end_sec': parse_user_time(end_time_input, 86399),
-                    'time_mode': time_mode, 'force_t0': force_t0, 'day_type': day_type,
-                    'time_range_str': f"{start_time_input}-{end_time_input}"
-                }
-                with st.spinner("Processing network (This may take a while)..."):
-                    success = execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_times, stops, shapes, s2_vars)
-                if success:
-                    st.session_state.show_settings = False
-                    st.rerun()
-
         else:
-            selected_route = st.selectbox("Route", available_routes, index=0)
+            selected_route = st.selectbox("Route", available_routes, index=0, key="route_selection")
             gtfs_route_trips = trips[trips['route_id'] == selected_route].copy()
             headsigns = gtfs_route_trips['trip_headsign'].dropna().unique()
-            if len(headsigns) == 0: st.error(f"No GTFS data for Route {selected_route}."); return
-            selected_dir = st.selectbox("Direction (Headsign)", headsigns)
-
-            if (selected_route != st.session_state.route_selection or selected_dir != st.session_state.direction_selection):
-                st.session_state.route_selection = selected_route
-                st.session_state.direction_selection = selected_dir
-                st.session_state.signatures_loaded = False
-
-            gtfs_route_trips = gtfs_route_trips[gtfs_route_trips['trip_headsign'] == selected_dir]
-            valid_st_sidebar = stop_times[stop_times['trip_id'].isin(gtfs_route_trips['trip_id'])].copy()
+            selected_dir = st.selectbox("Direction (Headsign)", headsigns if len(headsigns)>0 else ["No Data"], key="dir_selection")
             
-            if not valid_st_sidebar.empty:
-                valid_st_sidebar = valid_st_sidebar.merge(stops, on='stop_id', how='left')
-                sample_t = valid_st_sidebar['trip_id'].iloc[0]
-                sample_stops = valid_st_sidebar[valid_st_sidebar['trip_id'] == sample_t].sort_values('stop_sequence')
-                if sample_stops['shape_dist_traveled'].max() > 500: sample_stops['shape_dist_traveled'] /= 1000.0
-                stop_options = {row.stop_id: f"{row.stop_name} ({row.shape_dist_traveled:.1f} km)" for _, row in sample_stops.iterrows()}
-                selected_stop_ids = st.multiselect("Stop Filter", options=list(stop_options.keys()), default=list(stop_options.keys()), format_func=lambda x: stop_options[x])
-                st.session_state.stop_filter_ids = selected_stop_ids
-                st.session_state.force_t0_disabled = False if not selected_stop_ids else (sample_stops.iloc[0]['stop_id'] not in selected_stop_ids)
+            if len(headsigns) > 0:
+                gtfs_route_trips = gtfs_route_trips[gtfs_route_trips['trip_headsign'] == selected_dir]
+                valid_st_sidebar = stop_times[stop_times['trip_id'].isin(gtfs_route_trips['trip_id'])].copy()
+                if not valid_st_sidebar.empty:
+                    valid_st_sidebar = valid_st_sidebar.merge(stops, on='stop_id', how='left')
+                    sample_t = valid_st_sidebar['trip_id'].iloc[0]
+                    sample_stops = valid_st_sidebar[valid_st_sidebar['trip_id'] == sample_t].sort_values('stop_sequence')
+                    if sample_stops['shape_dist_traveled'].max() > 500: sample_stops['shape_dist_traveled'] /= 1000.0
+                    stop_options = {row.stop_id: f"{row.stop_name} ({row.shape_dist_traveled:.1f} km)" for _, row in sample_stops.iterrows()}
+                    selected_stop_ids = st.multiselect("Filter Specific Stops", options=list(stop_options.keys()), default=list(stop_options.keys()), format_func=lambda x: stop_options[x], key="stop_filter_ids")
+                else: selected_stop_ids = []
 
-            if st.button("Load Signatures", use_container_width=True):
-                with st.spinner("Extracting historical data..."):
-                    df_hist = load_route_data(parquet_path, selected_route)
-                    if day_type == "Saturdays": day_mask = (df_hist['day_of_week'] == 5) & (~df_hist['is_holiday'])
-                    elif day_type == "Sundays & Holidays": day_mask = (df_hist['day_of_week'] == 6) | (df_hist['is_holiday'])
-                    else: day_mask = (df_hist['day_of_week'] <= 4) & (~df_hist['is_holiday'])
-                    df_hist = df_hist[day_mask]
-                    
-                    historical_trip_ids = df_hist['trip_id'].unique()
-                    valid_trips = gtfs_route_trips[gtfs_route_trips['trip_id'].isin(historical_trip_ids)]
-                    
-                    if valid_trips.empty:
-                        st.error("No historical data matches GTFS schedule for this day type/direction.")
-                    else:
-                        sig_list, trip_start_dict = get_route_signatures(df_hist, valid_trips, stop_times, stops, parse_user_time(start_time_input, 0), parse_user_time(end_time_input, 86399))
-                        if not sig_list:
-                            st.warning("No GTFS signatures scheduled to run within your time range.")
-                            st.session_state.signatures_loaded = False
-                        else:
-                            st.session_state.signature_list = sig_list
-                            st.session_state.signatures_loaded = True
-                            st.session_state.stage2_vars = {
-                                'trip_start_dict': trip_start_dict, 'filter_start_sec': parse_user_time(start_time_input, 0),
-                                'filter_end_sec': parse_user_time(end_time_input, 86399), 'time_mode': time_mode, 'force_t0': force_t0, 
-                                'day_type': day_type, 'time_range_str': f"{start_time_input}-{end_time_input}"
-                            }
-            
-            if st.session_state.signatures_loaded:
-                st.divider()
-                sig_options = {i: f"({s['runs']} runs) | {format_seconds_to_time(s['min_sec'])} – {format_seconds_to_time(s['max_sec'])} | {s['orig']} → {s['dest']}" for i, s in enumerate(st.session_state.signature_list)}
-                selected_sig_idx = st.selectbox("Select Signature Window", options=list(sig_options.keys()), format_func=lambda x: sig_options[x])
+    with col_b:
+        st.subheader("2. Time & Date Configuration")
+        days_opts = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Holiday"]
+        st.multiselect("Days to Include", days_opts, key="days_selected")
+        st.slider("Time Window", min_value=datetime.time(0,0), max_value=datetime.time(23,59), format="HH:mm", key="time_slider")
+
+    # Advanced Configuration Expander
+    with st.expander("Advanced Configuration"):
+        st.slider("On-Time Reliability Window (Seconds)", min_value=-300, max_value=300, step=5, key="window_slider", help="Negative values allow early arrivals. Positive values allow late arrivals.")
+        st.radio("Time Application Mode", ["Overlap Mode", "Trip Start Mode"], key="time_mode", help="Overlap: Triggers if ANY part of the trip touches your Time Window. Trip Start: Only triggers if the trip explicitly originates within your Time Window.")
+        
+        f_disabled = False
+        if not adv_mode and len(headsigns) > 0 and 'sample_stops' in locals():
+            if not selected_stop_ids or sample_stops.iloc[0]['stop_id'] not in selected_stop_ids: f_disabled = True
+        st.checkbox("Align to First Observed Stop (Override GTFS Start)", key="force_t0", disabled=f_disabled, help="Calculates relative delays by anchoring t=0 at the first physical GPS ping at the origin stop, instead of the official GTFS scheduled departure. Disabled if origin stop is filtered out.")
+        
+        if not adv_mode and len(headsigns) > 0:
+            available_tids = gtfs_route_trips['trip_id'].unique()
+            st.multiselect("Isolate Specific Trip IDs", options=available_tids, default=[], key="isolated_trips", help="Explicitly filter the analysis to only process these scheduled trips.")
+
+    # Execution Action
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("🚀 Apply & Run Analysis", type="primary", use_container_width=True):
+        f_start = st.session_state.time_slider[0].hour * 3600 + st.session_state.time_slider[0].minute * 60
+        f_end = st.session_state.time_slider[1].hour * 3600 + st.session_state.time_slider[1].minute * 60
+        
+        days_lbl = ",".join([d[:3] for d in st.session_state.days_selected]) if len(st.session_state.days_selected) < 7 else "All Days"
+        
+        s2_vars = {
+            'filter_start_sec': f_start,
+            'filter_end_sec': f_end,
+            'time_mode': st.session_state.time_mode,
+            'force_t0': st.session_state.force_t0,
+            'days_selected': st.session_state.days_selected,
+            'days_summary': days_lbl,
+            'time_range_str': f"{st.session_state.time_slider[0].strftime('%H:%M')}-{st.session_state.time_slider[1].strftime('%H:%M')}",
+            'window_early': st.session_state.window_slider[0],
+            'window_late': st.session_state.window_slider[1],
+            'stop_filter_ids': st.session_state.stop_filter_ids if not adv_mode else None,
+            'isolated_trips': st.session_state.isolated_trips if not adv_mode else []
+        }
+        
+        with st.spinner("Processing analysis pipeline..."):
+            if adv_mode:
+                success = execute_multi_route_pipeline(st.session_state.multi_routes, parquet_path, trips, stop_times, stops, shapes, s2_vars)
+            else:
+                success = execute_single_route_pipeline(parquet_path, st.session_state.route_selection, st.session_state.dir_selection, s2_vars, gtfs_route_trips, stop_times, stops, shapes)
                 
-                col_btn1, col_btn2 = st.columns(2)
-                if col_btn1.button("❌ Cancel", use_container_width=True):
-                    st.session_state.show_settings = False
-                    st.rerun()
-                if col_btn2.button("🚀 Apply & Run Analysis", type="primary", use_container_width=True):
-                    with st.spinner("Processing analysis..."):
-                        execute_single_route_pipeline(selected_sig_idx, parquet_path, selected_route, gtfs_route_trips, stop_times, stops, shapes)
-                    st.session_state.show_settings = False
-                    st.rerun()
+            if success:
+                st.session_state.show_settings = False
+                st.rerun()
 
 # ==============================================================================
 # 7. MAIN UI & TAB LAYOUT
@@ -863,7 +700,7 @@ if st.session_state.show_settings:
 
 tab_map, tab_spaghetti, tab_stats = st.tabs([
     "🗺️ Route Reliability Map", 
-    "🍝 Spaghetti Chart", 
+    "🍝 Time-Distance Chart", 
     "📊 Density Chart"
 ])
 
@@ -879,7 +716,7 @@ with tab_map:
         else:
             st.info("🗺️ **Map View is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
     else:
-        st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']} | {st.session_state.reliability_window}")
+        st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
         results = st.session_state.analysis_results
         if 'segments_df' in results and not results['segments_df'].empty:
             map_instance = KeplerGl(height=600, data={"stops": results['stops_df'], "segments": results['segments_df']}, config=results['kepler_config'])
@@ -889,11 +726,13 @@ with tab_map:
 
 with tab_spaghetti:
     if not st.session_state.analysis_results:
-        st.info("🍝 **Spaghetti Chart is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
+        st.info("🍝 **Time-Distance Chart is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
     elif st.session_state.analysis_results.get('is_multi', False):
         st.warning("⚠️ **Charts Disabled.** Detailed trip visualizations are only available when analyzing a single route.")
     else:
-        st.plotly_chart(st.session_state.analysis_results['fig_B'], use_container_width=True)
+        st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
+        # Using the custom HTML renderer to inject Javascript for Google Maps clicking
+        render_plotly_with_gmaps_click(st.session_state.analysis_results['fig_B'], height=900)
 
 with tab_stats:
     if not st.session_state.analysis_results:
@@ -901,7 +740,8 @@ with tab_stats:
     elif st.session_state.analysis_results.get('is_multi', False):
         st.warning("⚠️ **Charts Disabled.** Detailed density plots are only available when analyzing a single route.")
     else:
-        st.plotly_chart(st.session_state.analysis_results['fig_A'], use_container_width=True)
+        st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
+        st.plotly_chart(st.session_state.analysis_results['fig_A'], use_container_width=True, height=900)
 
 st.markdown("---")
 st.caption("**Data Privacy Statement:** All data is open public data sourced from the City of Toronto Open Data Portal. AVL data reflects vehicle GPS locations only — zero passenger or Personally Identifiable Information (PII).")
