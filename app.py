@@ -264,7 +264,7 @@ def generate_kepler_config():
                         "id": "segments", "type": "geojson",
                         "config": {
                             "dataId": "segments", "label": "Route Segments", "columns": {"geojson": "geometry"}, "isVisible": True,
-                            "visConfig": {"opacity": 1.0, "strokeOpacity": 1.0, "thickness": 2.0, "strokeColor": None, "colorRange": color_scale_config, "strokeColorRange": color_scale_config}
+                            "visConfig": {"opacity": 1.0, "strokeOpacity": 1.0, "thickness": 1.0, "strokeColor": None, "colorRange": color_scale_config, "strokeColorRange": color_scale_config}
                         },
                         "visualChannels": {"colorField": {"name": "avg_reliability", "type": "real"}, "colorScale": "quantize", "strokeColorField": {"name": "avg_reliability", "type": "real"}, "strokeColorScale": "quantize"}
                     },
