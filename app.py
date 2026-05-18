@@ -268,7 +268,7 @@ def generate_kepler_config():
                             "visConfig": {
                                 "opacity": 1.0,
                                 "strokeOpacity": 1.0,
-                                "thickness": 1.0,
+                                "thickness": 2.0,
                                 "strokeColor": None,
                                 "colorRange": color_scale_config,
                                 "strokeColorRange": color_scale_config
@@ -292,6 +292,7 @@ def generate_kepler_config():
                             "visConfig": {
                                 "radiusRange": [3, 9],
                                 "opacity": 1.0,
+                                "filled": True,          # <--- FIX: Forces the points to have a solid background
                                 "outline": True,
                                 "thickness": 1.5,
                                 "strokeColor": [255, 255, 255], 
@@ -306,8 +307,8 @@ def generate_kepler_config():
                         }
                     }
                 ],
-                # FIX: In Kepler, layer index 0 draws at the bottom. We place segments first, stops on top.
-                "layerOrder": ["segments", "stops"],
+                # FIX: In Kepler config, index 0 is the TOP visual layer. 
+                "layerOrder": ["stops", "segments"],
                 "interactionConfig": {
                     "tooltip": {
                         "fieldsToShow": {
