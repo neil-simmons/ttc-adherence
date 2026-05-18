@@ -54,9 +54,6 @@ TTC_RED = "#DA251D"
 def get_network_lock():
     return threading.Lock()
 
-# ==============================================================================
-# 1. SESSION STATE INITIALIZATION
-# ==============================================================================
 defaults = {
     'signatures_loaded':  False,
     'signature_list':     [],
@@ -160,12 +157,11 @@ def load_route_data(path, selected_route):
 @st.cache_data(show_spinner="Loading static GTFS data...")
 def load_gtfs():
     str_dtype = 'string[pyarrow]'
-    # FIX: Read lat/lon as default, only force strings on IDs/Names
     stops = pd.read_csv(get_stops_path(), usecols=['stop_id', 'stop_name', 'stop_lat', 'stop_lon'], 
                         dtype={'stop_id': str_dtype, 'stop_name': str_dtype})
     stops['stop_id'] = stops['stop_id'].astype('category')
-    stops['stop_lat'] = pd.to_numeric(stops['stop_lat'], downcast='float') # Force Float
-    stops['stop_lon'] = pd.to_numeric(stops['stop_lon'], downcast='float') # Force Float
+    stops['stop_lat'] = pd.to_numeric(stops['stop_lat'], downcast='float')
+    stops['stop_lon'] = pd.to_numeric(stops['stop_lon'], downcast='float')
 
     trips = pd.read_csv(get_trips_path(), usecols=['route_id', 'trip_id', 'shape_id', 'trip_headsign'],
                         dtype={'route_id': str_dtype, 'trip_id': str_dtype, 'shape_id': str_dtype, 'trip_headsign': 'category'})
@@ -216,12 +212,19 @@ def load_precomputed_network():
     except Exception: return None 
 
 def generate_kepler_config():
-    """Generates the styling payload for the map rendering. Strict schema mapping for Lines & Points."""
+    # Exactly 20 colours (5% steps) bridging TTC Red -> Yellow -> Green
+    custom_20_colors = [
+        "#DA251D", "#E03920", "#E54E23", "#EB6326", "#F07729", 
+        "#F58C2C", "#FBA02F", "#FFB532", "#FFCA35", "#FFDE38", 
+        "#F2E43B", "#D8DB3D", "#BED240", "#A3C942", "#89C045", 
+        "#6FB747", "#54AE4A", "#3AA54C", "#209C4F", "#1A9641"
+    ]
+    
     color_scale_config = {
         "name": "TTC_Scale",
         "type": "custom",
         "category": "Custom",
-        "colors": [TTC_RED, "#fdae61", "#ffffbf", "#a6d96a", "#1a9641"]
+        "colors": custom_20_colors
     }
     
     return {
@@ -237,10 +240,12 @@ def generate_kepler_config():
                             "label": "Route Segments",
                             "columns": {"geojson": "geometry"},
                             "isVisible": True,
+                            "colorDomain": [0, 100],        # Locks legend to 0-100
+                            "strokeColorDomain": [0, 100],  # Locks segment colors to 0-100
                             "visConfig": {
                                 "opacity": 1.0,
                                 "strokeOpacity": 1.0,
-                                "thickness": 1.25,  # FIXED: Cut in half from 2.5
+                                "thickness": 1.0,
                                 "strokeColor": None,
                                 "colorRange": color_scale_config,
                                 "strokeColorRange": color_scale_config
@@ -261,8 +266,9 @@ def generate_kepler_config():
                             "label": "Stops",
                             "columns": {"lat": "stop_lat", "lng": "stop_lon"},
                             "isVisible": True,
+                            "colorDomain": [0, 100],       # Locks legend to 0-100
                             "visConfig": {
-                                "radiusRange": [3, 10], # FIXED: Slightly smaller points
+                                "radiusRange": [3, 9],
                                 "opacity": 1.0,
                                 "outline": True,
                                 "thickness": 1.5,
@@ -278,6 +284,7 @@ def generate_kepler_config():
                         }
                     }
                 ],
+                "layerOrder": [1, 0], # Forces Stops (1) to draw on top of Segments (0)
                 "interactionConfig": {
                     "tooltip": {
                         "fieldsToShow": {
@@ -437,7 +444,6 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
     return {'st_filtered': st_filtered, 'actual_relative_times': actual_relative_times, 'mode_b_lines': mode_b_lines, 'shape_id': sample_shape_id}
 
 def build_spatial_data(st_filtered, actual_relative_times, window_early, window_late, shapes, shape_id, route_id=None):
-    """Converts tracked times into Kepler-ready dataframes tracing GTFS shapes via substring projection."""
     reliability_dict, reliability_vals, sample_sizes = {}, {}, {}
     
     for stop in st_filtered.itertuples():
@@ -493,9 +499,9 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
     segments_df = gpd.GeoDataFrame(segments, geometry='geometry', crs=LATLON_PROJ) if segments else gpd.GeoDataFrame()
     return stops_df, segments_df, reliability_dict, reliability_vals
 
-def apply_route_offset(geom, route_id, route_index, total_routes):
+def apply_route_offset(geom, route_index, total_routes):
     if total_routes <= 1 or geom is None: return geom
-    offset_step = 0.00008 
+    offset_step = 0.00012 
     offset_val = (route_index - (total_routes - 1) / 2.0) * offset_step
     
     if offset_val == 0: return geom
@@ -538,7 +544,6 @@ def execute_single_route_pipeline(selected_sig_idx, parquet_path, selected_route
         selected_route
     )
     
-    # --- Plotly Generation ---
     fig_A = go.Figure()
     y_tick_texts = [f"{row['stop_name']} ({row['shape_dist_traveled']:.1f} km) [{reliability_dict[row['stop_id']]}]" for _, row in raw_data['st_filtered'].iterrows()]
     for stop in raw_data['st_filtered'].itertuples():
@@ -612,6 +617,7 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
                 raw_data = run_tracking(df_hist, sig['t_ids'], s2_vars, stop_times, stops, gtfs_route_trips, shapes)
                 if not raw_data: continue
                 
+                # FIXED: Grouping by `selection` instead of just `route` keeps bidirectional analysis strictly separate!
                 stops_df, segments_df, _, _ = build_spatial_data(
                     raw_data['st_filtered'], 
                     raw_data['actual_relative_times'], 
@@ -619,7 +625,7 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
                     window_late,
                     shapes,
                     raw_data['shape_id'],
-                    route
+                    selection
                 )
                 all_stops.append(stops_df)
                 all_segments.append(segments_df)
@@ -645,7 +651,7 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
             route_idx_map = {r: i for i, r in enumerate(unique_routes)}
             
             def offset_row(row):
-                return apply_route_offset(row['geometry'], row['route_id'], route_idx_map[row['route_id']], total_routes)
+                return apply_route_offset(row['geometry'], route_idx_map[row['route_id']], total_routes)
                 
             master_segments['geometry'] = master_segments.apply(offset_row, axis=1)
             master_segments = gpd.GeoDataFrame(master_segments, geometry='geometry', crs=LATLON_PROJ)
@@ -808,8 +814,6 @@ with tab_map:
             st.info("🗺️ **Showing Default Network View.** Click the **⚙️ Open Filter & Analysis Settings** button above to run a custom analysis.")
             stops_df = pd.DataFrame(precomputed['stops'])
             segments_df = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
-            
-            # OVERRIDING THE OLD PRECOMPUTED CONFIG WITH THE NEW STYLING
             map_instance = KeplerGl(height=600, data={"stops": stops_df, "segments": segments_df}, config=generate_kepler_config())
             keplergl_static(map_instance, center_map=True)
         else:
