@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import geopandas as gpd
 from shapely.geometry import LineString, Point
-from shapely.ops import substring
+from shapely.ops import substring, linemerge
 import plotly.graph_objects as go
 import gc
 import threading
@@ -306,7 +306,8 @@ def generate_kepler_config():
                         }
                     }
                 ],
-                "layerOrder": ["stops", "segments"], # FORCES STOPS TO RENDER ON TOP OF LINES
+                # FIX: In Kepler, layer index 0 draws at the bottom. We place segments first, stops on top.
+                "layerOrder": ["segments", "stops"],
                 "interactionConfig": {
                     "tooltip": {
                         "fieldsToShow": {
@@ -494,9 +495,27 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
 
     # 2. OFFSET CONTINUOUS BASELINE (Eliminates cracks and naturally separates Eastbound vs Westbound)
     if full_route_line:
-        offset_dist = 0.00005 + (route_idx * 0.00006)
+        # Shift base line by 5 meters + 8 meters per concurrent route to prevent overlapping tracks
+        offset_meters = 5.0 + (route_idx * 8.0)
         try:
-            full_route_line = full_route_line.parallel_offset(offset_dist, 'right', join_style=1)
+            # Project to UTM for accurate meter-based operations without degree distortion
+            gs = gpd.GeoSeries([full_route_line], crs=LATLON_PROJ).to_crs(UTM_PROJ)
+            
+            # Apply parallel_offset using join_style=2 (mitre) for crisp road corners
+            gs_offset = gs.geometry.apply(lambda geom: geom.parallel_offset(offset_meters, 'right', join_style=2))
+            
+            if not gs_offset.empty and not gs_offset.iloc[0].is_empty:
+                # Project back to WGS84 Lat/Lon
+                offset_geom = gs_offset.to_crs(LATLON_PROJ).iloc[0]
+                
+                # Resolve MultiLineStrings if tight corners broke the continuous line
+                if offset_geom.geom_type == 'MultiLineString':
+                    offset_geom = linemerge(offset_geom)
+                    if offset_geom.geom_type == 'MultiLineString':
+                        # Fallback: take the longest contiguous track piece
+                        offset_geom = max(offset_geom.geoms, key=lambda x: x.length)
+                        
+                full_route_line = offset_geom
         except Exception:
             pass
 
