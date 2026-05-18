@@ -70,7 +70,9 @@ def get_network_lock():
 if 'analysis_results' not in st.session_state: st.session_state.analysis_results = None
 if 'raw_pipeline_data' not in st.session_state: st.session_state.raw_pipeline_data = None
 if 'show_settings' not in st.session_state: st.session_state.show_settings = False
-if 'run_trigger' not in st.session_state: st.session_state.run_trigger = False
+if 'signatures_loaded' not in st.session_state: st.session_state.signatures_loaded = False
+if 'signature_list' not in st.session_state: st.session_state.signature_list = []
+if 'trip_start_dict' not in st.session_state: st.session_state.trip_start_dict = {}
 
 # ==============================================================================
 # 2. DATA LOADERS
@@ -307,6 +309,48 @@ def apply_day_filters(df, days_selected):
         
     return df[day_mask]
 
+def get_route_signatures(df_hist_raw, valid_trips, stop_times, stops, filter_start_sec, filter_end_sec, days_selected):
+    """Analyzes the exact stopping pattern of scheduled trips to group identical paths."""
+    df_hist_filtered = apply_day_filters(df_hist_raw, days_selected)
+    
+    valid_st = stop_times[stop_times['trip_id'].isin(valid_trips['trip_id'])].copy()
+    valid_st = valid_st.merge(stops, on='stop_id', how='left')
+    valid_st['arrival_sec'] = valid_st['arrival_time'].apply(parse_gtfs_time)
+    start_times_series = valid_st.groupby('trip_id')['arrival_sec'].transform('min')
+    valid_st['relative_sec'] = valid_st['arrival_sec'] - start_times_series
+    valid_st = valid_st.sort_values(['trip_id', 'stop_sequence'])
+
+    signatures_dict = {}
+    for t_id, df_group in valid_st.groupby('trip_id', observed=True):
+        sig = tuple(zip(df_group['stop_id'], df_group['relative_sec']))
+        if not sig: continue
+        if sig not in signatures_dict: signatures_dict[sig] = []
+        signatures_dict[sig].append(t_id)
+
+    first_stops = valid_st.groupby('trip_id', observed=True).first().reset_index()
+    last_stops = valid_st.groupby('trip_id', observed=True).last().reset_index()
+    trip_start_dict = dict(zip(first_stops['trip_id'], first_stops['arrival_sec']))
+    trip_orig_dict = dict(zip(first_stops['trip_id'], first_stops['stop_name']))
+    trip_dest_dict = dict(zip(last_stops['trip_id'], last_stops['stop_name']))
+    
+    trip_hist_counts = df_hist_filtered.groupby('trip_id', observed=True)['op_date'].nunique().to_dict()
+
+    sig_ui_list = []
+    for sig, t_ids in signatures_dict.items():
+        hist_run_count = sum(trip_hist_counts.get(tid, 0) for tid in t_ids)
+        if hist_run_count == 0: continue
+        start_secs = [trip_start_dict[tid] for tid in t_ids]
+        min_s, max_s = min(start_secs), max(start_secs)
+        if max_s < filter_start_sec or min_s > filter_end_sec: continue
+        
+        sig_ui_list.append({
+            'signature': sig, 't_ids': t_ids, 'orig': trip_orig_dict[t_ids[0]], 
+            'dest': trip_dest_dict[t_ids[0]], 'stops': len(sig), 
+            'min_sec': min_s, 'max_sec': max_s, 'runs': hist_run_count
+        })
+
+    return sorted(sig_ui_list, key=lambda x: x['min_sec']), trip_start_dict
+
 def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtfs_route_trips, shapes):
     df_hist_filtered = apply_day_filters(df_hist_raw, s2_vars['days_selected'])
     trip_hist        = df_hist_filtered[df_hist_filtered['trip_id'].isin(matching_trip_ids)].copy()
@@ -463,23 +507,25 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
 def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2_vars, gtfs_route_trips, stop_times, stops, shapes):
     df_hist_raw = load_route_data(parquet_path, selected_route)
     
-    trip_list = s2_vars['isolated_trips'] if s2_vars['isolated_trips'] else gtfs_route_trips['trip_id'].unique()
-    
-    valid_st = stop_times[stop_times['trip_id'].isin(trip_list)].copy()
-    valid_st = valid_st.merge(stops, on='stop_id', how='left')
-    valid_st['arrival_sec'] = valid_st['arrival_time'].apply(parse_gtfs_time)
-    
-    trip_start_dict = valid_st.groupby('trip_id', observed=True)['arrival_sec'].min().to_dict()
-    s2_vars['trip_start_dict'] = trip_start_dict
+    # Isolate strictly to the signature's trips (or user override)
+    base_trips = s2_vars['signature_t_ids']
+    if s2_vars['isolated_trips']: 
+        trip_list = [t for t in base_trips if t in s2_vars['isolated_trips']]
+    else: 
+        trip_list = base_trips
+        
+    if not trip_list:
+        st.error("No valid trips remain after applying filters.")
+        return False
     
     raw_data = run_tracking(df_hist_raw, trip_list, s2_vars, stop_times, stops, gtfs_route_trips, shapes)
     
     if not raw_data:
-        st.error("Tracking failed or no matching data found for these criteria.")
+        st.error("Tracking failed or no historical data found for these scheduled trips.")
         return False
 
     # Dynamic Title Generation
-    t_str = f"Route {selected_route} {selected_dir} | {s2_vars['days_summary']} | {s2_vars['time_range_str']} | Window: {s2_vars['window_early']}s to +{s2_vars['window_late']}s"
+    t_str = f"Route {selected_route} {selected_dir} | {s2_vars['sig_desc']} | {s2_vars['days_summary']} | {s2_vars['time_range_str']} | Window: {s2_vars['window_early']}s to +{s2_vars['window_late']}s"
     if s2_vars['force_t0']: t_str += " | t=0 Aligned"
     if s2_vars['isolated_trips']: t_str += f" | Filtered to {len(s2_vars['isolated_trips'])} Trips"
     raw_data['title_info'] = t_str
@@ -541,19 +587,22 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
             gtfs_route_trips = trips[(trips['route_id'] == route) & (trips['trip_headsign'] == direction)]
             df_hist = load_route_data(parquet_path, route)
             
-            valid_st = stop_times[stop_times['trip_id'].isin(gtfs_route_trips['trip_id'])].copy()
-            valid_st = valid_st.merge(stops, on='stop_id', how='left')
-            valid_st['arrival_sec'] = valid_st['arrival_time'].apply(parse_gtfs_time)
-            s2_vars['trip_start_dict'] = valid_st.groupby('trip_id', observed=True)['arrival_sec'].min().to_dict()
-            
-            raw_data = run_tracking(df_hist, gtfs_route_trips['trip_id'].unique(), s2_vars, stop_times, stops, gtfs_route_trips, shapes)
-            if not raw_data: continue
-            
-            stops_df, segments_df, _, _ = build_spatial_data(
-                raw_data['st_filtered'], raw_data['actual_relative_times'], s2_vars['window_early'], s2_vars['window_late'], shapes, raw_data['shape_id'], route, route_idx
+            # Extract auto signatures for multi-route without UI intervention
+            sig_list, trip_start_dict = get_route_signatures(
+                df_hist, gtfs_route_trips, stop_times, stops, s2_vars['filter_start_sec'], s2_vars['filter_end_sec'], s2_vars['days_selected']
             )
-            all_stops.append(stops_df)
-            all_segments.append(segments_df)
+            if not sig_list: continue
+            s2_vars['trip_start_dict'] = trip_start_dict
+            
+            for sig in sig_list:
+                raw_data = run_tracking(df_hist, sig['t_ids'], s2_vars, stop_times, stops, gtfs_route_trips, shapes)
+                if not raw_data: continue
+                
+                stops_df, segments_df, _, _ = build_spatial_data(
+                    raw_data['st_filtered'], raw_data['actual_relative_times'], s2_vars['window_early'], s2_vars['window_late'], shapes, raw_data['shape_id'], route, route_idx
+                )
+                all_stops.append(stops_df)
+                all_segments.append(segments_df)
             
         progress_bar.empty()
         
@@ -598,6 +647,12 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
     if "time_mode" not in st.session_state: st.session_state.time_mode = "Overlap Mode"
     if "force_t0" not in st.session_state: st.session_state.force_t0 = False
     
+    with col_b:
+        st.subheader("2. Time & Date Configuration")
+        days_opts = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Holiday"]
+        st.multiselect("Days to Include", days_opts, key="days_selected")
+        st.slider("Time Window", min_value=datetime.time(0,0), max_value=datetime.time(23,59), format="HH:mm", key="time_slider")
+
     with col_a:
         st.subheader("1. Route Selection")
         adv_mode = st.toggle("Advanced: Multi-Route Analysis", key="adv_mode")
@@ -624,12 +679,29 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                     stop_options = {row.stop_id: f"{row.stop_name} ({row.shape_dist_traveled:.1f} km)" for _, row in sample_stops.iterrows()}
                     selected_stop_ids = st.multiselect("Filter Specific Stops", options=list(stop_options.keys()), default=list(stop_options.keys()), format_func=lambda x: stop_options[x], key="stop_filter_ids")
                 else: selected_stop_ids = []
-
-    with col_b:
-        st.subheader("2. Time & Date Configuration")
-        days_opts = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Holiday"]
-        st.multiselect("Days to Include", days_opts, key="days_selected")
-        st.slider("Time Window", min_value=datetime.time(0,0), max_value=datetime.time(23,59), format="HH:mm", key="time_slider")
+            
+            st.info("ℹ️ **What is a Time Signature?** Transit routes often have variations (like short-turns or detours). A 'Signature' groups together trips that share the *exact same physical stopping pattern*. Isolating signatures ensures the mathematical engine compares strictly identical trips.")
+            
+            if st.button("🔍 1. Find Available Signatures (Required)", use_container_width=True):
+                with st.spinner("Scanning historical database for matching trip patterns..."):
+                    df_hist = load_route_data(parquet_path, selected_route)
+                    f_start = st.session_state.time_slider[0].hour * 3600 + st.session_state.time_slider[0].minute * 60
+                    f_end = st.session_state.time_slider[1].hour * 3600 + st.session_state.time_slider[1].minute * 60
+                    
+                    sig_list, trip_start_dict = get_route_signatures(
+                        df_hist, gtfs_route_trips, stop_times, stops, f_start, f_end, st.session_state.days_selected
+                    )
+                    
+                    st.session_state.signature_list = sig_list
+                    st.session_state.trip_start_dict = trip_start_dict
+                    st.session_state.signatures_loaded = True
+                    
+            if st.session_state.signatures_loaded:
+                if not st.session_state.signature_list:
+                    st.warning("No GTFS signatures scheduled to run within your current Time Window.")
+                else:
+                    sig_opts = {i: f"({s['runs']} recorded runs) | {s['orig']} → {s['dest']} | Scheduled: {format_seconds_to_time(s['min_sec'])}–{format_seconds_to_time(s['max_sec'])}" for i, s in enumerate(st.session_state.signature_list)}
+                    selected_sig_idx = st.selectbox("Select Scheduled Signature Window", options=list(sig_opts.keys()), format_func=lambda x: sig_opts[x], key="sig_selection")
 
     # Advanced Configuration Expander
     with st.expander("Advanced Configuration"):
@@ -641,16 +713,19 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
             if not selected_stop_ids or sample_stops.iloc[0]['stop_id'] not in selected_stop_ids: f_disabled = True
         st.checkbox("Align to First Observed Stop (Override GTFS Start)", key="force_t0", disabled=f_disabled, help="Calculates relative delays by anchoring t=0 at the first physical GPS ping at the origin stop, instead of the official GTFS scheduled departure. Disabled if origin stop is filtered out.")
         
-        if not adv_mode and len(headsigns) > 0:
-            available_tids = gtfs_route_trips['trip_id'].unique()
+        if not adv_mode and len(headsigns) > 0 and st.session_state.signatures_loaded and st.session_state.signature_list:
+            available_tids = st.session_state.signature_list[selected_sig_idx]['t_ids']
             st.multiselect("Isolate Specific Trip IDs", options=available_tids, default=[], key="isolated_trips", help="Explicitly filter the analysis to only process these scheduled trips.")
 
     # Execution Action
     st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("🚀 Apply & Run Analysis", type="primary", use_container_width=True):
+    if st.button("🚀 2. Apply & Run Analysis", type="primary", use_container_width=True):
+        if not adv_mode and not st.session_state.signatures_loaded:
+            st.error("Please click 'Find Available Signatures' first before running a single route analysis.")
+            return
+
         f_start = st.session_state.time_slider[0].hour * 3600 + st.session_state.time_slider[0].minute * 60
         f_end = st.session_state.time_slider[1].hour * 3600 + st.session_state.time_slider[1].minute * 60
-        
         days_lbl = ",".join([d[:3] for d in st.session_state.days_selected]) if len(st.session_state.days_selected) < 7 else "All Days"
         
         s2_vars = {
@@ -664,8 +739,14 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
             'window_early': st.session_state.window_slider[0],
             'window_late': st.session_state.window_slider[1],
             'stop_filter_ids': st.session_state.stop_filter_ids if not adv_mode else None,
-            'isolated_trips': st.session_state.isolated_trips if not adv_mode else []
+            'isolated_trips': st.session_state.isolated_trips if (not adv_mode and 'isolated_trips' in st.session_state) else []
         }
+        
+        if not adv_mode:
+            selected_sig = st.session_state.signature_list[selected_sig_idx]
+            s2_vars['signature_t_ids'] = selected_sig['t_ids']
+            s2_vars['trip_start_dict'] = st.session_state.trip_start_dict
+            s2_vars['sig_desc'] = f"{selected_sig['orig']} → {selected_sig['dest']}"
         
         with st.spinner("Processing analysis pipeline..."):
             if adv_mode:
