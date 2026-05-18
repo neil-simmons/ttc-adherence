@@ -4,14 +4,13 @@ import importlib
 
 # --- AUTO-INSTALLER ---
 def ensure_packages():
-    """Checks for required packages and installs them if missing."""
     packages = {
         'pandas': 'pandas',
         'numpy': 'numpy',
         'geopandas': 'geopandas',
         'shapely': 'shapely',
         'pyarrow': 'pyarrow',
-        'huggingface_hub': 'huggingface-hub' # pip name differs from module name
+        'huggingface_hub': 'huggingface-hub'
     }
     for module_name, pip_name in packages.items():
         try:
@@ -23,11 +22,11 @@ def ensure_packages():
 
 ensure_packages()
 
-# --- IMPORT EVERYTHING ELSE NOW THAT WE KNOW IT EXISTS ---
 import pandas as pd
 import numpy as np
 import geopandas as gpd
-from shapely.geometry import LineString
+from shapely.geometry import LineString, Point
+from shapely.ops import substring
 import pyarrow.parquet as pq
 import pyarrow.compute as pc
 import pyarrow.dataset as ds
@@ -56,7 +55,6 @@ TIME_MODE = "Overlap Mode"
 FORCE_T0 = False
 WINDOW_EARLY = -15
 WINDOW_LATE = 120
-# Defaulting to AM Peak (7:00 AM to 9:00 AM) - typical for transit analysis
 FILTER_START_SEC = 7 * 3600  
 FILTER_END_SEC = 9 * 3600
 
@@ -70,8 +68,11 @@ def parse_gtfs_time(time_str):
     return h * 3600 + m * 60 + s
 
 def load_data():
-    stops = pd.read_csv(_hf("stops.txt"), usecols=['stop_id', 'stop_name', 'stop_lat', 'stop_lon'], dtype='string[pyarrow]')
+    # FIX: Casting lat/lon as floats, not strings
+    stops = pd.read_csv(_hf("stops.txt"), usecols=['stop_id', 'stop_name', 'stop_lat', 'stop_lon'], dtype={'stop_id': 'string[pyarrow]', 'stop_name': 'string[pyarrow]'})
     stops['stop_id'] = stops['stop_id'].astype('category')
+    stops['stop_lat'] = pd.to_numeric(stops['stop_lat'])
+    stops['stop_lon'] = pd.to_numeric(stops['stop_lon'])
 
     trips = pd.read_csv(_hf("trips.txt"), usecols=['route_id', 'trip_id', 'shape_id', 'trip_headsign'], dtype='string[pyarrow]')
     trips['trip_id'] = trips['trip_id'].str.replace(r'\.0$', '', regex=True).str.strip().astype('category')
@@ -108,7 +109,6 @@ def load_route_data(path, selected_route):
     df = df[mask].copy()
     local_time = local_time[mask]
     
-    # FIXED BUG: Cast to int32 instead of int8 to prevent overflow when multiplying by 3600
     hour = local_time.dt.hour.astype(np.int32) 
     sec_since_midnight = (hour * 3600 + local_time.dt.minute.astype(np.int32) * 60 + local_time.dt.second.astype(np.int32)).astype(np.int32)
 
@@ -118,6 +118,20 @@ def load_route_data(path, selected_route):
     df['day_of_week'] = pd.to_datetime(df['op_date']).dt.dayofweek.astype(np.int8)
     df['is_holiday'] = df['op_date'].astype(str).isin(STAT_HOLIDAYS)
     return df
+
+def apply_route_offset(geom, route_index, total_routes):
+    """Applies a visual offset to geometries that share the same physical tracks."""
+    if total_routes <= 1 or geom is None: return geom
+    offset_step = 0.00008 
+    offset_val = (route_index - (total_routes - 1) / 2.0) * offset_step
+    
+    if offset_val == 0: return geom
+    
+    try:
+        if hasattr(geom, 'offset_curve'): return geom.offset_curve(offset_val)
+        else: return geom.parallel_offset(abs(offset_val), 'left' if offset_val > 0 else 'right')
+    except:
+        return geom
 
 def run_precompute():
     print("--- TTC Network Precompute Script ---")
@@ -146,7 +160,6 @@ def run_precompute():
             valid_trips = gtfs_route_trips[gtfs_route_trips['trip_id'].isin(df_hist['trip_id'].unique())]
             if valid_trips.empty: continue
 
-            # Get Signatures
             valid_st = stop_times[stop_times['trip_id'].isin(valid_trips['trip_id'])].copy()
             valid_st = valid_st.merge(stops, on='stop_id', how='left')
             valid_st['arrival_sec'] = valid_st['arrival_time'].apply(parse_gtfs_time)
@@ -202,7 +215,7 @@ def run_precompute():
                     if (TIME_MODE == "Trip Start Mode" and FILTER_START_SEC <= anchor_sec <= FILTER_END_SEC) or (TIME_MODE != "Trip Start Mode" and any(FILTER_START_SEC <= t <= FILTER_END_SEC for t in interp.values())):
                         for s_id, t in interp.items(): actual_times[s_id].append(t - anchor_sec)
 
-                # Build Geospatial output for this signature
+                # Geometry Mapping Updates
                 rel_dict, rel_vals, sample_sizes = {}, {}, {}
                 for stop in st_filtered.itertuples():
                     arr = actual_times[stop.stop_id]
@@ -218,14 +231,34 @@ def run_precompute():
                 stops_df['sample_size'] = stops_df['stop_id'].map(sample_sizes)
                 all_stops.append(stops_df)
 
+                # NEW SHAPELY PATH TRACING
+                shape_coords = list(zip(shp_pts['shape_pt_lon'].astype(float), shp_pts['shape_pt_lat'].astype(float)))
+                full_route_line = LineString(shape_coords) if len(shape_coords) > 1 else None
+
                 segs = []
                 for i in range(len(st_filtered) - 1):
                     s1, s2 = st_filtered.iloc[i], st_filtered.iloc[i + 1]
                     if s1.stop_lon == s2.stop_lon and s1.stop_lat == s2.stop_lat: continue
+                    
+                    lon1, lat1 = float(s1.stop_lon), float(s1.stop_lat)
+                    lon2, lat2 = float(s2.stop_lon), float(s2.stop_lat)
+                    
+                    geom = None
+                    if full_route_line:
+                        d1 = full_route_line.project(Point(lon1, lat1))
+                        d2 = full_route_line.project(Point(lon2, lat2))
+                        start_d, end_d = min(d1, d2), max(d1, d2)
+                        if end_d > start_d:
+                            geom = substring(full_route_line, start_d, end_d)
+                            
+                    if geom is None or geom.is_empty:
+                        geom = LineString([(lon1, lat1), (lon2, lat2)])
+                        
                     segs.append({
+                        'route_id': route,
                         'segment': f"{s1.stop_name} to {s2.stop_name}",
                         'avg_reliability': (rel_vals[s1.stop_id] + rel_vals[s2.stop_id]) / 2.0,
-                        'geometry': LineString([(float(s1.stop_lon), float(s1.stop_lat)), (float(s2.stop_lon), float(s2.stop_lat))])
+                        'geometry': geom
                     })
                 if segs: all_segments.append(gpd.GeoDataFrame(segs, geometry='geometry', crs=LATLON_PROJ))
 
@@ -239,16 +272,20 @@ def run_precompute():
     master_segments = gpd.GeoDataFrame()
     if all_segments:
         master_segments = pd.concat(all_segments, ignore_index=True)
-        master_segments = master_segments.groupby('segment', as_index=False).agg({'avg_reliability': 'mean', 'geometry': 'first'})
+        # Group by route_id AND segment to ensure overlapping short-turns merge seamlessly, but separate routes stay distinct
+        master_segments = master_segments.groupby(['route_id', 'segment'], as_index=False).agg({'avg_reliability': 'mean', 'geometry': 'first'})
+        
+        # APPLY OFFSET FOR PARALLEL ROUTES
+        unique_routes = sorted(master_segments['route_id'].unique())
+        total_routes = len(unique_routes)
+        route_idx_map = {r: i for i, r in enumerate(unique_routes)}
+        master_segments['geometry'] = master_segments.apply(lambda row: apply_route_offset(row['geometry'], route_idx_map[row['route_id']], total_routes), axis=1)
         master_segments = gpd.GeoDataFrame(master_segments, geometry='geometry', crs=LATLON_PROJ)
 
-    # SERIALIZE TO JSON
-    kepler_config = {"version": "v1", "config": {"visState": {"layers": [{"type": "geojson", "config": {"dataId": "segments", "label": "Route Segments", "colorField": {"name": "avg_reliability", "type": "real"}, "colorScale": "quantize", "visConfig": {"thickness": 5, "colorRange": {"colors": ["#d7191c", "#fdae61", "#ffffbf", "#a6d96a", "#1a9641"]}}}}, {"type": "point", "config": {"dataId": "stops", "label": "Stops", "colorField": {"name": "reliability", "type": "real"}, "colorScale": "quantize", "sizeField": {"name": "sample_size", "type": "integer"}, "visConfig": {"radiusRange": [5, 20], "colorRange": {"colors": ["#d7191c", "#fdae61", "#ffffbf", "#a6d96a", "#1a9641"]}}}}]}}}
-    
     output = {
         "stops": master_stops.to_dict(orient='records'),
         "segments": json.loads(master_segments.to_json()) if not master_segments.empty else {},
-        "config": kepler_config
+        "config": {} # Left empty to ensure app.py overrides it with our fresh styling!
     }
     
     with open('precomputed_network.json', 'w') as f:
