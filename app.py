@@ -29,14 +29,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# NOTE: Streamlit DOES NOT allow forcing Light Mode via Python code.
-# To disable dark mode completely, you MUST create a file in your repository
-# at `.streamlit/config.toml` containing exactly:
-#
-# [theme]
-# base="light"
-# primaryColor="#DA251D"
-
 HF_REPO      = "neil-simmons/ttc-avl-data"
 HF_REPO_TYPE = "dataset"
 
@@ -56,7 +48,7 @@ MAX_ALLOWED_PING_GAP_SEC = 120
 UTM_PROJ   = "EPSG:32617"
 LATLON_PROJ = "EPSG:4326"
 
-TTC_RED = "#DA251D" # Official TTC Red used for branding and mapping
+TTC_RED = "#DA251D"
 
 @st.cache_resource
 def get_network_lock():
@@ -221,7 +213,12 @@ def load_precomputed_network():
 
 def generate_kepler_config():
     """Generates the styling payload for the map rendering. Strict schema mapping for Lines & Points."""
-    color_scale = [TTC_RED, "#fdae61", "#ffffbf", "#a6d96a", "#1a9641"]
+    color_scale_config = {
+        "name": "TTC_Scale",
+        "type": "custom",
+        "category": "Custom",
+        "colors": [TTC_RED, "#fdae61", "#ffffbf", "#a6d96a", "#1a9641"]
+    }
     
     return {
         "version": "v1",
@@ -239,15 +236,16 @@ def generate_kepler_config():
                             "visConfig": {
                                 "opacity": 1.0,
                                 "strokeOpacity": 1.0,
-                                "thickness": 4.5,
+                                "thickness": 2.5,  # Thinner line
                                 "strokeColor": None,
-                                "strokeColorRange": {
-                                    "name": "TTC_Scale",
-                                    "type": "custom",
-                                    "category": "Custom",
-                                    "colors": color_scale
-                                }
-                            },
+                                "colorRange": color_scale_config,
+                                "strokeColorRange": color_scale_config
+                            }
+                        },
+                        "visualChannels": {
+                            # Kepler strictly maps data-colors using visualChannels
+                            "colorField": {"name": "avg_reliability", "type": "real"},
+                            "colorScale": "quantize",
                             "strokeColorField": {"name": "avg_reliability", "type": "real"},
                             "strokeColorScale": "quantize"
                         }
@@ -264,26 +262,31 @@ def generate_kepler_config():
                                 "radiusRange": [4, 12],
                                 "opacity": 1.0,
                                 "outline": True,
-                                "thickness": 2,
-                                "strokeColor": [255, 255, 255],
-                                "colorRange": {
-                                    "name": "TTC_Scale",
-                                    "type": "custom",
-                                    "category": "Custom",
-                                    "colors": color_scale
-                                }
-                            },
+                                "thickness": 1.5,
+                                "strokeColor": [255, 255, 255], # White outline
+                                "colorRange": color_scale_config
+                            }
+                        },
+                        "visualChannels": {
                             "colorField": {"name": "reliability", "type": "real"},
                             "colorScale": "quantize",
-                            "sizeField": {"name": "sample_size", "type": "integer"}
+                            "sizeField": {"name": "sample_size", "type": "integer"},
+                            "sizeScale": "linear"
                         }
                     }
                 ],
                 "interactionConfig": {
                     "tooltip": {
                         "fieldsToShow": {
-                            "segments": [{"name": "segment", "format": None}, {"name": "route_id", "format": None}, {"name": "avg_reliability", "format": ".1f"}],
-                            "stops": [{"name": "stop_name", "format": None}, {"name": "reliability", "format": ".1f"}]
+                            "segments": [
+                                {"name": "segment", "format": None}, 
+                                {"name": "route_id", "format": None}, 
+                                {"name": "avg_reliability", "format": ".1f"}
+                            ],
+                            "stops": [
+                                {"name": "stop_name", "format": None}, 
+                                {"name": "reliability", "format": ".1f"}
+                            ]
                         },
                         "enabled": True
                     }
@@ -451,7 +454,6 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
     stops_df['reliability']  = stops_df['stop_id'].map(reliability_vals)
     stops_df['sample_size']  = stops_df['stop_id'].map(sample_sizes)
 
-    # Build true street-tracing continuous line geometry from GTFS shape
     shp_pts = shapes[shapes['shape_id'] == shape_id].sort_values('shape_pt_sequence')
     shape_coords = list(zip(shp_pts['shape_pt_lon'].astype(float), shp_pts['shape_pt_lat'].astype(float)))
     
@@ -468,7 +470,6 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
         
         geom = None
         if full_route_line:
-            # Project stop coordinates onto the continuous line string to extract exactly the correct street curve
             d1 = full_route_line.project(Point(lon1, lat1))
             d2 = full_route_line.project(Point(lon2, lat2))
             start_d, end_d = min(d1, d2), max(d1, d2)
@@ -490,9 +491,8 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
     return stops_df, segments_df, reliability_dict, reliability_vals
 
 def apply_route_offset(geom, route_id, route_index, total_routes):
-    """Prevents concurrent routes sharing tracks from overlapping visually."""
     if total_routes <= 1 or geom is None: return geom
-    offset_step = 0.00008 # Approx ~8 meters sidestep 
+    offset_step = 0.00008 
     offset_val = (route_index - (total_routes - 1) / 2.0) * offset_step
     
     if offset_val == 0: return geom
@@ -635,10 +635,8 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
 
         if all_segments:
             master_segments = pd.concat(all_segments, ignore_index=True)
-            # Grouping by both Route AND Segment seamlessly merges short-turn headsigns while preserving unique route differences 
             master_segments = master_segments.groupby(['route_id', 'segment'], as_index=False).agg({'avg_reliability': 'mean', 'geometry': 'first'})
             
-            # Apply geometric offset strictly to ensure different routes on the same tracks do not overlap visually
             unique_routes = sorted(master_segments['route_id'].unique())
             total_routes = len(unique_routes)
             route_idx_map = {r: i for i, r in enumerate(unique_routes)}
@@ -807,7 +805,9 @@ with tab_map:
             st.info("🗺️ **Showing Default Network View.** Click the **⚙️ Open Filter & Analysis Settings** button above to run a custom analysis.")
             stops_df = pd.DataFrame(precomputed['stops'])
             segments_df = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
-            map_instance = KeplerGl(height=600, data={"stops": stops_df, "segments": segments_df}, config=precomputed['config'])
+            
+            # OVERRIDING THE OLD PRECOMPUTED CONFIG WITH THE NEW STYLING
+            map_instance = KeplerGl(height=600, data={"stops": stops_df, "segments": segments_df}, config=generate_kepler_config())
             keplergl_static(map_instance, center_map=True)
         else:
             st.info("🗺️ **Map View is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
