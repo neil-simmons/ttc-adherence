@@ -23,7 +23,7 @@ st.set_page_config(
     page_title="TTC Streetcar Reliability",
     page_icon="🚊",
     layout="wide",
-    initial_sidebar_state="collapsed" # Sidebar collapsed by default since we use a popup
+    initial_sidebar_state="collapsed"
 )
 
 HF_REPO      = "neil-simmons/ttc-avl-data"
@@ -59,6 +59,7 @@ defaults = {
     'route_selection':    None,
     'direction_selection': None,
     'stage2_vars':        None,
+    'show_settings':      False, # UI state for the settings panel
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -466,10 +467,9 @@ def generate_visuals_and_map():
     st.session_state.analysis_results = {'fig_A': fig_A, 'fig_B': fig_B, 'stops_df': stops_df, 'segments_df': segments_df, 'kepler_config': kepler_config}
 
 # ==============================================================================
-# 5. DIALOG CONFIGURATION UI (POPUP)
+# 5. FILTER SETTINGS PANEL (REPLACING DIALOG)
 # ==============================================================================
-@st.dialog("⚙️ Analysis & Filter Settings", width="large")
-def filter_dialog(available_routes, parquet_path, trips, stop_times, stops, shapes):
+def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops, shapes):
     st.markdown("Configure your parameters below. Click **Apply & Run Analysis** to update the tabs.")
     
     col_a, col_b = st.columns(2)
@@ -590,10 +590,17 @@ def filter_dialog(available_routes, parquet_path, trips, stop_times, stops, shap
             sig_options = {i: f"({s['runs']} runs) | {format_seconds_to_time(s['min_sec'])} – {format_seconds_to_time(s['max_sec'])} | {s['orig']} → {s['dest']}" for i, s in enumerate(st.session_state.signature_list)}
             selected_sig_idx = st.selectbox("Select Signature Window", options=list(sig_options.keys()), format_func=lambda x: sig_options[x])
             
-            if st.button("🚀 Apply & Run Analysis", type="primary", use_container_width=True):
-                with st.spinner("Processing analysis..."):
-                    execute_math_pipeline(selected_sig_idx, parquet_path, selected_route, gtfs_route_trips, stop_times, stops, shapes)
-                st.rerun() # Forces page reload which implicitly closes dialog and updates tabs
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                if st.button("❌ Cancel", use_container_width=True):
+                    st.session_state.show_settings = False
+                    st.rerun()
+            with col_btn2:
+                if st.button("🚀 Apply & Run Analysis", type="primary", use_container_width=True):
+                    with st.spinner("Processing analysis..."):
+                        execute_math_pipeline(selected_sig_idx, parquet_path, selected_route, gtfs_route_trips, stop_times, stops, shapes)
+                    st.session_state.show_settings = False
+                    st.rerun() # Forces page reload which closes the panel and updates tabs
 
 # ==============================================================================
 # 6. MAIN UI & TAB LAYOUT
@@ -606,9 +613,18 @@ parquet_path = get_parquet_path()
 available_routes = get_available_routes(parquet_path)
 stops, trips, stop_times, shapes = load_gtfs()
 
-# Filter Button Trigger
-if st.button("⚙️ Open Filter & Analysis Settings", type="primary"):
-    filter_dialog(available_routes, parquet_path, trips, stop_times, stops, shapes)
+# Filter Button Trigger (Only show if panel is closed)
+if not st.session_state.show_settings:
+    if st.button("⚙️ Open Filter & Analysis Settings", type="primary"):
+        st.session_state.show_settings = True
+        st.rerun()
+
+# Render Settings Panel Conditionally
+if st.session_state.show_settings:
+    with st.container():
+        st.markdown("### ⚙️ Analysis & Filter Settings")
+        render_filter_panel(available_routes, parquet_path, trips, stop_times, stops, shapes)
+        st.markdown("---")
 
 # TABS
 tab_map, tab_spaghetti, tab_stats = st.tabs([
