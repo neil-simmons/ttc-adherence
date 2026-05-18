@@ -1,3 +1,29 @@
+import sys
+import subprocess
+import importlib
+
+# --- AUTO-INSTALLER ---
+def ensure_packages():
+    """Checks for required packages and installs them if missing."""
+    packages = {
+        'pandas': 'pandas',
+        'numpy': 'numpy',
+        'geopandas': 'geopandas',
+        'shapely': 'shapely',
+        'pyarrow': 'pyarrow',
+        'huggingface_hub': 'huggingface-hub' # pip name differs from module name
+    }
+    for module_name, pip_name in packages.items():
+        try:
+            importlib.import_module(module_name)
+        except ImportError:
+            print(f"📦 Missing {module_name}. Installing {pip_name}...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", pip_name])
+            print(f"✅ Successfully installed {pip_name}.")
+
+ensure_packages()
+
+# --- IMPORT EVERYTHING ELSE NOW THAT WE KNOW IT EXISTS ---
 import pandas as pd
 import numpy as np
 import geopandas as gpd
@@ -9,7 +35,6 @@ import pyarrow as pa
 from huggingface_hub import hf_hub_download
 import json
 import warnings
-import gc
 
 warnings.filterwarnings("ignore")
 
@@ -82,8 +107,10 @@ def load_route_data(path, selected_route):
     mask = ((local_time.dt.tz_localize(None) >= pd.to_datetime(START_DATE)) & (local_time.dt.tz_localize(None) <= pd.to_datetime(END_DATE)))
     df = df[mask].copy()
     local_time = local_time[mask]
-    hour = local_time.dt.hour.astype(np.int8)
-    sec_since_midnight = (hour * 3600 + local_time.dt.minute * 60 + local_time.dt.second).astype(np.int32)
+    
+    # FIXED BUG: Cast to int32 instead of int8 to prevent overflow when multiplying by 3600
+    hour = local_time.dt.hour.astype(np.int32) 
+    sec_since_midnight = (hour * 3600 + local_time.dt.minute.astype(np.int32) * 60 + local_time.dt.second.astype(np.int32)).astype(np.int32)
 
     df['op_seconds'] = np.where(hour < 4, sec_since_midnight + 86400, sec_since_midnight).astype(np.int32)
     op_date = np.where(hour < 4, (local_time - pd.Timedelta(days=1)).dt.date, local_time.dt.date)
