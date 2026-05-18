@@ -145,7 +145,7 @@ def load_route_data(path, selected_route):
     df         = df[mask].copy()
     local_time = local_time[mask]
 
-    hour             = local_time.dt.hour.astype(np.int8)
+    hour             = local_time.dt.hour.astype(np.int32)
     sec_since_midnight = (hour * 3600 + local_time.dt.minute * 60 + local_time.dt.second).astype(np.int32)
 
     df['op_seconds']  = np.where(hour < 4, sec_since_midnight + 86400, sec_since_midnight).astype(np.int32)
