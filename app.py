@@ -211,8 +211,33 @@ def load_precomputed_network():
         with open(path, 'r') as f: return json.load(f)
     except Exception: return None 
 
+def inject_legend_anchors(stops_df, segments_df):
+    """Silently forces Kepler's dynamic quantize scale to permanently map 0 to 100."""
+    if stops_df.empty or segments_df.empty: return stops_df, segments_df
+    
+    # Add dummy 0% and 100% points exactly underneath the first real point so they are invisible
+    d_stop_0 = stops_df.iloc[0].copy()
+    d_stop_0['reliability'] = 0.0
+    d_stop_0['sample_size'] = 0
+    
+    d_stop_100 = stops_df.iloc[0].copy()
+    d_stop_100['reliability'] = 100.0
+    d_stop_100['sample_size'] = 0
+    
+    s_df = pd.concat([stops_df, pd.DataFrame([d_stop_0, d_stop_100])], ignore_index=True)
+    
+    d_seg_0 = segments_df.iloc[0].copy()
+    d_seg_0['avg_reliability'] = 0.0
+    
+    d_seg_100 = segments_df.iloc[0].copy()
+    d_seg_100['avg_reliability'] = 100.0
+    
+    seg_df = pd.concat([segments_df, gpd.GeoDataFrame([d_seg_0, d_seg_100], geometry='geometry', crs=LATLON_PROJ)], ignore_index=True)
+    
+    return s_df, seg_df
+
 def generate_kepler_config():
-    # Exactly 20 colours (5% steps) bridging TTC Red -> Yellow -> Green
+    # Exactly 20 colours bridging TTC Red -> Yellow -> Green (Creates perfect 5% bins via quantize)
     custom_20_colors = [
         "#DA251D", "#E03920", "#E54E23", "#EB6326", "#F07729", 
         "#F58C2C", "#FBA02F", "#FFB532", "#FFCA35", "#FFDE38", 
@@ -240,12 +265,10 @@ def generate_kepler_config():
                             "label": "Route Segments",
                             "columns": {"geojson": "geometry"},
                             "isVisible": True,
-                            "colorDomain": [0, 100],        # Locks legend to 0-100
-                            "strokeColorDomain": [0, 100],  # Locks segment colors to 0-100
                             "visConfig": {
                                 "opacity": 1.0,
                                 "strokeOpacity": 1.0,
-                                "thickness": 1.0,
+                                "thickness": 2.0,
                                 "strokeColor": None,
                                 "colorRange": color_scale_config,
                                 "strokeColorRange": color_scale_config
@@ -266,7 +289,6 @@ def generate_kepler_config():
                             "label": "Stops",
                             "columns": {"lat": "stop_lat", "lng": "stop_lon"},
                             "isVisible": True,
-                            "colorDomain": [0, 100],       # Locks legend to 0-100
                             "visConfig": {
                                 "radiusRange": [3, 9],
                                 "opacity": 1.0,
@@ -284,7 +306,7 @@ def generate_kepler_config():
                         }
                     }
                 ],
-                "layerOrder": [1, 0], # Forces Stops (1) to draw on top of Segments (0)
+                "layerOrder": ["stops", "segments"], # FORCES STOPS TO RENDER ON TOP OF LINES
                 "interactionConfig": {
                     "tooltip": {
                         "fieldsToShow": {
@@ -294,7 +316,8 @@ def generate_kepler_config():
                                 {"name": "avg_reliability", "format": ".1f"}
                             ],
                             "stops": [
-                                {"name": "stop_name", "format": None}, 
+                                {"name": "stop_name", "format": None},
+                                {"name": "route_id", "format": None}, 
                                 {"name": "reliability", "format": ".1f"}
                             ]
                         },
@@ -443,7 +466,12 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
     if not mode_b_lines: return None
     return {'st_filtered': st_filtered, 'actual_relative_times': actual_relative_times, 'mode_b_lines': mode_b_lines, 'shape_id': sample_shape_id}
 
-def build_spatial_data(st_filtered, actual_relative_times, window_early, window_late, shapes, shape_id, route_id=None):
+def build_spatial_data(st_filtered, actual_relative_times, window_early, window_late, shapes, shape_id, route_id, route_idx):
+    """
+    Builds the geometry. 
+    Crucial Fix: Offsets the continuous GTFS line FIRST (so segments perfectly touch without cracks).
+    Then it mathematically snaps the Stops directly onto this new offset line so they align perfectly.
+    """
     reliability_dict, reliability_vals, sample_sizes = {}, {}, {}
     
     for stop in st_filtered.itertuples():
@@ -459,38 +487,61 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
         reliability_dict[stop.stop_id] = f"{pct:.1f}%"
         reliability_vals[stop.stop_id] = pct
 
-    stops_df = st_filtered[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']].copy()
-    stops_df['reliability']  = stops_df['stop_id'].map(reliability_vals)
-    stops_df['sample_size']  = stops_df['stop_id'].map(sample_sizes)
-
+    # 1. BUILD CONTINUOUS BASELINE
     shp_pts = shapes[shapes['shape_id'] == shape_id].sort_values('shape_pt_sequence')
     shape_coords = list(zip(shp_pts['shape_pt_lon'].astype(float), shp_pts['shape_pt_lat'].astype(float)))
-    
     full_route_line = LineString(shape_coords) if len(shape_coords) > 1 else None
 
+    # 2. OFFSET CONTINUOUS BASELINE (Eliminates cracks and naturally separates Eastbound vs Westbound)
+    if full_route_line:
+        offset_dist = 0.00005 + (route_idx * 0.00006)
+        try:
+            full_route_line = full_route_line.parallel_offset(offset_dist, 'right', join_style=1)
+        except Exception:
+            pass
+
+    # 3. BUILD STOPS AND SNAP THEM TO OFFSET LINE
+    offset_stops = []
+    for stop in st_filtered.itertuples():
+        orig_pt = Point(float(stop.stop_lon), float(stop.stop_lat))
+        if full_route_line and not full_route_line.is_empty:
+            proj_dist = full_route_line.project(orig_pt)
+            new_pt = full_route_line.interpolate(proj_dist)
+            new_lon, new_lat = new_pt.x, new_pt.y
+        else:
+            new_lon, new_lat = orig_pt.x, orig_pt.y
+            
+        offset_stops.append({
+            'route_id': route_id,
+            'stop_id': stop.stop_id,
+            'stop_name': stop.stop_name,
+            'stop_lat': new_lat,
+            'stop_lon': new_lon,
+            'reliability': reliability_vals[stop.stop_id],
+            'sample_size': sample_sizes[stop.stop_id]
+        })
+        
+    stops_df = pd.DataFrame(offset_stops)
+
+    # 4. CHOP OFFSET LINE INTO SEGMENTS
     segments = []
     for i in range(len(st_filtered) - 1):
         s1, s2 = st_filtered.iloc[i], st_filtered.iloc[i + 1]
-        if s1.stop_lon == s2.stop_lon and s1.stop_lat == s2.stop_lat: 
-            continue
-            
-        lon1, lat1 = float(s1.stop_lon), float(s1.stop_lat)
-        lon2, lat2 = float(s2.stop_lon), float(s2.stop_lat)
+        if s1.stop_lon == s2.stop_lon and s1.stop_lat == s2.stop_lat: continue
         
         geom = None
-        if full_route_line:
-            d1 = full_route_line.project(Point(lon1, lat1))
-            d2 = full_route_line.project(Point(lon2, lat2))
+        if full_route_line and not full_route_line.is_empty:
+            d1 = full_route_line.project(Point(float(s1.stop_lon), float(s1.stop_lat)))
+            d2 = full_route_line.project(Point(float(s2.stop_lon), float(s2.stop_lat)))
             start_d, end_d = min(d1, d2), max(d1, d2)
-            
             if end_d > start_d:
                 geom = substring(full_route_line, start_d, end_d)
                 
         if geom is None or geom.is_empty:
-            geom = LineString([(lon1, lat1), (lon2, lat2)])
+            geom = LineString([(float(s1.stop_lon), float(s1.stop_lat)), (float(s2.stop_lon), float(s2.stop_lat))])
             
         segments.append({
-            'route_id': route_id if route_id else 'Single',
+            'route_id': route_id,
             'segment': f"{s1.stop_name} to {s2.stop_name}",
             'avg_reliability': (reliability_vals[s1.stop_id] + reliability_vals[s2.stop_id]) / 2.0,
             'geometry': geom
@@ -498,19 +549,6 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
         
     segments_df = gpd.GeoDataFrame(segments, geometry='geometry', crs=LATLON_PROJ) if segments else gpd.GeoDataFrame()
     return stops_df, segments_df, reliability_dict, reliability_vals
-
-def apply_route_offset(geom, route_index, total_routes):
-    if total_routes <= 1 or geom is None: return geom
-    offset_step = 0.00012 
-    offset_val = (route_index - (total_routes - 1) / 2.0) * offset_step
-    
-    if offset_val == 0: return geom
-    
-    try:
-        if hasattr(geom, 'offset_curve'): return geom.offset_curve(offset_val)
-        else: return geom.parallel_offset(abs(offset_val), 'left' if offset_val > 0 else 'right')
-    except:
-        return geom
 
 # ==============================================================================
 # 5. EXECUTION PIPELINES
@@ -541,8 +579,11 @@ def execute_single_route_pipeline(selected_sig_idx, parquet_path, selected_route
         window_late,
         shapes,
         raw_data['shape_id'],
-        selected_route
+        selected_route,
+        0
     )
+    
+    stops_df, segments_df = inject_legend_anchors(stops_df, segments_df)
     
     fig_A = go.Figure()
     y_tick_texts = [f"{row['stop_name']} ({row['shape_dist_traveled']:.1f} km) [{reliability_dict[row['stop_id']]}]" for _, row in raw_data['st_filtered'].iterrows()]
@@ -594,9 +635,14 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
 
         progress_bar = st.progress(0)
         
+        # Base Route map for determining spatial offsets
+        unique_routes = sorted(list(set([c.split(' | ')[0] for c in selected_combos])))
+        route_idx_map = {r: i for i, r in enumerate(unique_routes)}
+        
         for i, selection in enumerate(selected_combos):
             progress_bar.progress((i) / len(selected_combos), text=f"Processing {selection}...")
             route, direction = selection.split(" | ")
+            route_idx = route_idx_map[route]
             
             gtfs_route_trips = trips[(trips['route_id'] == route) & (trips['trip_headsign'] == direction)]
             df_hist = load_route_data(parquet_path, route)
@@ -617,7 +663,6 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
                 raw_data = run_tracking(df_hist, sig['t_ids'], s2_vars, stop_times, stops, gtfs_route_trips, shapes)
                 if not raw_data: continue
                 
-                # FIXED: Grouping by `selection` instead of just `route` keeps bidirectional analysis strictly separate!
                 stops_df, segments_df, _, _ = build_spatial_data(
                     raw_data['st_filtered'], 
                     raw_data['actual_relative_times'], 
@@ -625,7 +670,8 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
                     window_late,
                     shapes,
                     raw_data['shape_id'],
-                    selection
+                    route, # Grouping by Base Route (Short turns merge! Opposing directions auto-offset!)
+                    route_idx
                 )
                 all_stops.append(stops_df)
                 all_segments.append(segments_df)
@@ -638,25 +684,19 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
             
         master_stops = pd.concat(all_stops, ignore_index=True)
         master_stops['rel_weighted'] = master_stops['reliability'] * master_stops['sample_size']
-        master_stops = master_stops.groupby(['stop_id', 'stop_name', 'stop_lat', 'stop_lon'], as_index=False, observed=True).agg({'rel_weighted': 'sum', 'sample_size': 'sum'})
+        # Group by Route ID allows separate routes to maintain their own physical dots on their specific track line
+        master_stops = master_stops.groupby(['route_id', 'stop_id', 'stop_name', 'stop_lat', 'stop_lon'], as_index=False, observed=True).agg({'rel_weighted': 'sum', 'sample_size': 'sum'})
         master_stops['reliability'] = np.where(master_stops['sample_size'] > 0, master_stops['rel_weighted'] / master_stops['sample_size'], 0)
         master_stops.drop(columns=['rel_weighted'], inplace=True)
 
         if all_segments:
             master_segments = pd.concat(all_segments, ignore_index=True)
             master_segments = master_segments.groupby(['route_id', 'segment'], as_index=False).agg({'avg_reliability': 'mean', 'geometry': 'first'})
-            
-            unique_routes = sorted(master_segments['route_id'].unique())
-            total_routes = len(unique_routes)
-            route_idx_map = {r: i for i, r in enumerate(unique_routes)}
-            
-            def offset_row(row):
-                return apply_route_offset(row['geometry'], route_idx_map[row['route_id']], total_routes)
-                
-            master_segments['geometry'] = master_segments.apply(offset_row, axis=1)
             master_segments = gpd.GeoDataFrame(master_segments, geometry='geometry', crs=LATLON_PROJ)
         else:
             master_segments = gpd.GeoDataFrame()
+            
+        master_stops, master_segments = inject_legend_anchors(master_stops, master_segments)
         
         st.session_state.raw_pipeline_data = {'title_info': f"Multi-Route Analysis | {s2_vars['day_type']} {s2_vars['time_range_str']}"}
         st.session_state.analysis_results = {
