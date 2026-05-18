@@ -160,8 +160,12 @@ def load_route_data(path, selected_route):
 @st.cache_data(show_spinner="Loading static GTFS data...")
 def load_gtfs():
     str_dtype = 'string[pyarrow]'
-    stops = pd.read_csv(get_stops_path(), usecols=['stop_id', 'stop_name', 'stop_lat', 'stop_lon'], dtype=str_dtype)
+    # FIX: Read lat/lon as default, only force strings on IDs/Names
+    stops = pd.read_csv(get_stops_path(), usecols=['stop_id', 'stop_name', 'stop_lat', 'stop_lon'], 
+                        dtype={'stop_id': str_dtype, 'stop_name': str_dtype})
     stops['stop_id'] = stops['stop_id'].astype('category')
+    stops['stop_lat'] = pd.to_numeric(stops['stop_lat'], downcast='float') # Force Float
+    stops['stop_lon'] = pd.to_numeric(stops['stop_lon'], downcast='float') # Force Float
 
     trips = pd.read_csv(get_trips_path(), usecols=['route_id', 'trip_id', 'shape_id', 'trip_headsign'],
                         dtype={'route_id': str_dtype, 'trip_id': str_dtype, 'shape_id': str_dtype, 'trip_headsign': 'category'})
@@ -236,14 +240,13 @@ def generate_kepler_config():
                             "visConfig": {
                                 "opacity": 1.0,
                                 "strokeOpacity": 1.0,
-                                "thickness": 2.5,  # Thinner line
+                                "thickness": 1.25,  # FIXED: Cut in half from 2.5
                                 "strokeColor": None,
                                 "colorRange": color_scale_config,
                                 "strokeColorRange": color_scale_config
                             }
                         },
                         "visualChannels": {
-                            # Kepler strictly maps data-colors using visualChannels
                             "colorField": {"name": "avg_reliability", "type": "real"},
                             "colorScale": "quantize",
                             "strokeColorField": {"name": "avg_reliability", "type": "real"},
@@ -259,11 +262,11 @@ def generate_kepler_config():
                             "columns": {"lat": "stop_lat", "lng": "stop_lon"},
                             "isVisible": True,
                             "visConfig": {
-                                "radiusRange": [4, 12],
+                                "radiusRange": [3, 10], # FIXED: Slightly smaller points
                                 "opacity": 1.0,
                                 "outline": True,
                                 "thickness": 1.5,
-                                "strokeColor": [255, 255, 255], # White outline
+                                "strokeColor": [255, 255, 255], 
                                 "colorRange": color_scale_config
                             }
                         },
