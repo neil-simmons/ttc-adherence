@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import geopandas as gpd
-from shapely.geometry import LineString
+from shapely.geometry import LineString, Point
+from shapely.ops import substring
 import plotly.graph_objects as go
 import gc
 import threading
@@ -15,7 +16,6 @@ import pyarrow.compute as pc
 import pyarrow as pa
 import pyarrow.dataset as ds
 import warnings
-from scipy.spatial import cKDTree
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -29,7 +29,10 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# NOTE: To force global light mode, create .streamlit/config.toml in your repo with:
+# NOTE: Streamlit DOES NOT allow forcing Light Mode via Python code.
+# To disable dark mode completely, you MUST create a file in your repository
+# at `.streamlit/config.toml` containing exactly:
+#
 # [theme]
 # base="light"
 # primaryColor="#DA251D"
@@ -42,7 +45,7 @@ GTFS_STOPS      = "stops.txt"
 GTFS_TRIPS      = "trips.txt"
 GTFS_STOP_TIMES = "stop_times.txt"
 GTFS_SHAPES     = "shapes.txt"
-PRECOMPUTED_MAP = "precomputed_network.json" # Will load this if it exists
+PRECOMPUTED_MAP = "precomputed_network.json"
 
 START_DATE    = '2026-03-15'
 END_DATE      = '2026-05-02 23:59:59'
@@ -55,7 +58,6 @@ LATLON_PROJ = "EPSG:4326"
 
 TTC_RED = "#DA251D" # Official TTC Red used for branding and mapping
 
-# Threading lock to prevent OOM crashes on Hugging Face Spaces
 @st.cache_resource
 def get_network_lock():
     return threading.Lock()
@@ -84,7 +86,6 @@ for key, val in defaults.items():
 # ==============================================================================
 # 2. DATA LOADERS
 # ==============================================================================
-
 def _hf(filename):
     return hf_hub_download(repo_id=HF_REPO, filename=filename, repo_type=HF_REPO_TYPE)
 
@@ -116,7 +117,6 @@ def get_available_routes(path):
 
 @st.cache_data(show_spinner="Generating Global Route Dictionary...")
 def get_all_route_directions(_trips, available_routes):
-    """Creates the multiselect options for the advanced menu."""
     options = []
     for r in available_routes:
         dirs = _trips[_trips['route_id'] == r]['trip_headsign'].dropna().unique()
@@ -191,7 +191,7 @@ def load_gtfs():
     return stops, trips, stop_times, shapes
 
 # ==============================================================================
-# 3. HELPER FUNCTIONS
+# 3. HELPER FUNCTIONS & KEPLER CONFIG
 # ==============================================================================
 def parse_gtfs_time(time_str):
     if pd.isna(time_str): return np.nan
@@ -204,12 +204,6 @@ def parse_user_time(time_str, default_sec):
         return h * 3600 + m * 60
     except Exception: return default_sec
 
-def format_relative_time(seconds):
-    if pd.isna(seconds): return "N/A"
-    sign = "+" if seconds >= 0 else "-"
-    secs = abs(int(seconds))
-    return f"{sign}{secs // 60:02d}m {secs % 60:02d}s"
-
 def format_seconds_to_time(seconds):
     if pd.isna(seconds) or seconds < 0: return "N/A"
     h = int(seconds // 3600)
@@ -220,18 +214,13 @@ def format_seconds_to_time(seconds):
     return f"{display_h:02d}:{m:02d} {ampm}"
 
 def load_precomputed_network():
-    """Attempts to load a precomputed map from HF to show on boot."""
     try:
         path = _hf(PRECOMPUTED_MAP)
-        with open(path, 'r') as f:
-            return json.load(f)
-    except Exception:
-        return None # Graceful failure if file isn't uploaded yet
+        with open(path, 'r') as f: return json.load(f)
+    except Exception: return None 
 
 def generate_kepler_config():
-    """Generates the styling payload for the map rendering."""
-    # Red (0%) to Green (100%) mapped directly
-    # TTC_RED -> Orange -> Yellow -> Light Green -> Green
+    """Generates the styling payload for the map rendering. Strict schema mapping for Lines & Points."""
     color_scale = [TTC_RED, "#fdae61", "#ffffbf", "#a6d96a", "#1a9641"]
     
     return {
@@ -240,39 +229,65 @@ def generate_kepler_config():
             "visState": {
                 "layers": [
                     {
+                        "id": "segments",
                         "type": "geojson",
                         "config": {
                             "dataId": "segments",
                             "label": "Route Segments",
                             "columns": {"geojson": "geometry"},
-                            "colorField": {"name": "avg_reliability", "type": "real"},
-                            "colorScale": "quantize",
+                            "isVisible": True,
                             "visConfig": {
+                                "opacity": 1.0,
+                                "strokeOpacity": 1.0,
                                 "thickness": 4.5,
-                                "colorRange": {"colors": color_scale}
-                            }
+                                "strokeColor": None,
+                                "strokeColorRange": {
+                                    "name": "TTC_Scale",
+                                    "type": "custom",
+                                    "category": "Custom",
+                                    "colors": color_scale
+                                }
+                            },
+                            "strokeColorField": {"name": "avg_reliability", "type": "real"},
+                            "strokeColorScale": "quantize"
                         }
                     },
                     {
+                        "id": "stops",
                         "type": "point",
                         "config": {
                             "dataId": "stops",
                             "label": "Stops",
                             "columns": {"lat": "stop_lat", "lng": "stop_lon"},
-                            "colorField": {"name": "reliability", "type": "real"},
-                            "colorScale": "quantize",
-                            "sizeField": {"name": "sample_size", "type": "integer"},
+                            "isVisible": True,
                             "visConfig": {
                                 "radiusRange": [4, 12],
-                                "stroked": True,
+                                "opacity": 1.0,
+                                "outline": True,
+                                "thickness": 2,
                                 "strokeColor": [255, 255, 255],
-                                "strokeThickness": 1.5,
-                                "filled": True,
-                                "colorRange": {"colors": color_scale}
-                            }
+                                "colorRange": {
+                                    "name": "TTC_Scale",
+                                    "type": "custom",
+                                    "category": "Custom",
+                                    "colors": color_scale
+                                }
+                            },
+                            "colorField": {"name": "reliability", "type": "real"},
+                            "colorScale": "quantize",
+                            "sizeField": {"name": "sample_size", "type": "integer"}
                         }
                     }
-                ]
+                ],
+                "interactionConfig": {
+                    "tooltip": {
+                        "fieldsToShow": {
+                            "segments": [{"name": "segment", "format": None}, {"name": "route_id", "format": None}, {"name": "avg_reliability", "format": ".1f"}],
+                            "stops": [{"name": "stop_name", "format": None}, {"name": "reliability", "format": ".1f"}]
+                        },
+                        "enabled": True
+                    }
+                }
             },
             "mapStyle": {
                 "styleType": "muted_night"
@@ -284,7 +299,6 @@ def generate_kepler_config():
 # 4. MODULARIZED PIPELINE FUNCTIONS
 # ==============================================================================
 def get_route_signatures(df_hist, valid_trips, stop_times, stops, filter_start_sec, filter_end_sec):
-    """Extracts available scheduling windows for a route."""
     valid_st = stop_times[stop_times['trip_id'].isin(valid_trips['trip_id'])].copy()
     valid_st = valid_st.merge(stops, on='stop_id', how='left')
     valid_st['arrival_sec'] = valid_st['arrival_time'].apply(parse_gtfs_time)
@@ -318,7 +332,6 @@ def get_route_signatures(df_hist, valid_trips, stop_times, stops, filter_start_s
     return sorted(sig_ui_list, key=lambda x: x['min_sec']), trip_start_dict
 
 def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtfs_route_trips, shapes, stop_filter_ids=None):
-    """Core monotonic math engine. Returns raw trajectory data."""
     if s2_vars['day_type'] == "Saturdays":
         day_mask = (df_hist_raw['day_of_week'] == 5) & (~df_hist_raw['is_holiday'])
     elif s2_vars['day_type'] == "Sundays & Holidays":
@@ -417,8 +430,8 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
     if not mode_b_lines: return None
     return {'st_filtered': st_filtered, 'actual_relative_times': actual_relative_times, 'mode_b_lines': mode_b_lines, 'shape_id': sample_shape_id}
 
-def build_spatial_data(st_filtered, actual_relative_times, window_early, window_late, shapes, shape_id):
-    """Converts tracked times into Kepler-ready dataframes mapping exactly to GTFS real-world shapes."""
+def build_spatial_data(st_filtered, actual_relative_times, window_early, window_late, shapes, shape_id, route_id=None):
+    """Converts tracked times into Kepler-ready dataframes tracing GTFS shapes via substring projection."""
     reliability_dict, reliability_vals, sample_sizes = {}, {}, {}
     
     for stop in st_filtered.itertuples():
@@ -438,11 +451,11 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
     stops_df['reliability']  = stops_df['stop_id'].map(reliability_vals)
     stops_df['sample_size']  = stops_df['stop_id'].map(sample_sizes)
 
-    # Reconstruct actual path lines utilizing KDTree nearest-neighbor snapping to the official shapes
+    # Build true street-tracing continuous line geometry from GTFS shape
     shp_pts = shapes[shapes['shape_id'] == shape_id].sort_values('shape_pt_sequence')
     shape_coords = list(zip(shp_pts['shape_pt_lon'].astype(float), shp_pts['shape_pt_lat'].astype(float)))
     
-    tree = cKDTree(shape_coords) if shape_coords else None
+    full_route_line = LineString(shape_coords) if len(shape_coords) > 1 else None
 
     segments = []
     for i in range(len(st_filtered) - 1):
@@ -454,19 +467,20 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
         lon2, lat2 = float(s2.stop_lon), float(s2.stop_lat)
         
         geom = None
-        if tree:
-            _, idx1 = tree.query((lon1, lat1))
-            _, idx2 = tree.query((lon2, lat2))
+        if full_route_line:
+            # Project stop coordinates onto the continuous line string to extract exactly the correct street curve
+            d1 = full_route_line.project(Point(lon1, lat1))
+            d2 = full_route_line.project(Point(lon2, lat2))
+            start_d, end_d = min(d1, d2), max(d1, d2)
             
-            i_start, i_end = min(idx1, idx2), max(idx1, idx2)
-            if i_end > i_start:
-                geom = LineString(shape_coords[i_start:i_end+1])
+            if end_d > start_d:
+                geom = substring(full_route_line, start_d, end_d)
                 
-        # Fallback to straight line if nearest shape points resolved identically 
-        if geom is None:
+        if geom is None or geom.is_empty:
             geom = LineString([(lon1, lat1), (lon2, lat2)])
             
         segments.append({
+            'route_id': route_id if route_id else 'Single',
             'segment': f"{s1.stop_name} to {s2.stop_name}",
             'avg_reliability': (reliability_vals[s1.stop_id] + reliability_vals[s2.stop_id]) / 2.0,
             'geometry': geom
@@ -474,6 +488,20 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
         
     segments_df = gpd.GeoDataFrame(segments, geometry='geometry', crs=LATLON_PROJ) if segments else gpd.GeoDataFrame()
     return stops_df, segments_df, reliability_dict, reliability_vals
+
+def apply_route_offset(geom, route_id, route_index, total_routes):
+    """Prevents concurrent routes sharing tracks from overlapping visually."""
+    if total_routes <= 1 or geom is None: return geom
+    offset_step = 0.00008 # Approx ~8 meters sidestep 
+    offset_val = (route_index - (total_routes - 1) / 2.0) * offset_step
+    
+    if offset_val == 0: return geom
+    
+    try:
+        if hasattr(geom, 'offset_curve'): return geom.offset_curve(offset_val)
+        else: return geom.parallel_offset(abs(offset_val), 'left' if offset_val > 0 else 'right')
+    except:
+        return geom
 
 # ==============================================================================
 # 5. EXECUTION PIPELINES
@@ -493,7 +521,6 @@ def execute_single_route_pipeline(selected_sig_idx, parquet_path, selected_route
     raw_data['title_info'] = title_info
     st.session_state.raw_pipeline_data = raw_data
     
-    # Generate spatial & plot data
     is_standard  = st.session_state.reliability_window.startswith('Standard')
     window_early = -15 if is_standard else -300
     window_late  = 120 if is_standard else  300
@@ -504,7 +531,8 @@ def execute_single_route_pipeline(selected_sig_idx, parquet_path, selected_route
         window_early, 
         window_late,
         shapes,
-        raw_data['shape_id']
+        raw_data['shape_id'],
+        selected_route
     )
     
     # --- Plotly Generation ---
@@ -516,7 +544,6 @@ def execute_single_route_pipeline(selected_sig_idx, parquet_path, selected_route
         if N == 0: continue
         times_min = [round(t / 60.0, 1) for t in offsets_arr]
         
-        # Color mapping adjusted to strictly utilize TTC Red for low confidence intervals
         c_base, c_fill, c_box = (TTC_RED, 'rgba(218,37,29,0.4)', 'rgba(218,37,29,0.1)') if N < 10 else ('goldenrod', 'rgba(218,165,32,0.4)', 'rgba(218,165,32,0.1)') if N < 25 else ('#1f77b4', 'rgba(31,119,180,0.4)', 'rgba(31,119,180,0.1)')
         
         fig_A.add_trace(go.Violin(x=times_min, y=np.repeat(stop.shape_dist_traveled, N), orientation='h', side='positive', scalemode='count', line_color=c_base, fillcolor=c_fill, showlegend=False, points=False, box_visible=False))
@@ -546,7 +573,6 @@ def execute_single_route_pipeline(selected_sig_idx, parquet_path, selected_route
     }
 
 def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_times, stops, shapes, s2_vars):
-    """Safely runs the pipeline for multiple routes using a thread lock."""
     lock = get_network_lock()
     if not lock.acquire(blocking=False):
         st.error("⚠️ The server is currently processing a heavy network-wide calculation for another user. Please wait a moment and try again.")
@@ -564,7 +590,6 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
             progress_bar.progress((i) / len(selected_combos), text=f"Processing {selection}...")
             route, direction = selection.split(" | ")
             
-            # 1. Setup specific GTFS objects
             gtfs_route_trips = trips[(trips['route_id'] == route) & (trips['trip_headsign'] == direction)]
             df_hist = load_route_data(parquet_path, route)
             
@@ -576,12 +601,10 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
             valid_trips = gtfs_route_trips[gtfs_route_trips['trip_id'].isin(df_hist['trip_id'].unique())]
             if valid_trips.empty: continue
 
-            # 2. Get ALL signatures
             sig_list, trip_start_dict = get_route_signatures(df_hist, valid_trips, stop_times, stops, s2_vars['filter_start_sec'], s2_vars['filter_end_sec'])
             if not sig_list: continue
             s2_vars['trip_start_dict'] = trip_start_dict
             
-            # 3. Track EVERY signature and append
             for sig in sig_list:
                 raw_data = run_tracking(df_hist, sig['t_ids'], s2_vars, stop_times, stops, gtfs_route_trips, shapes)
                 if not raw_data: continue
@@ -592,7 +615,8 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
                     window_early, 
                     window_late,
                     shapes,
-                    raw_data['shape_id']
+                    raw_data['shape_id'],
+                    route
                 )
                 all_stops.append(stops_df)
                 all_segments.append(segments_df)
@@ -604,18 +628,25 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
             return False
             
         master_stops = pd.concat(all_stops, ignore_index=True)
-        
-        # Aggregate overlapping stops
         master_stops['rel_weighted'] = master_stops['reliability'] * master_stops['sample_size']
         master_stops = master_stops.groupby(['stop_id', 'stop_name', 'stop_lat', 'stop_lon'], as_index=False, observed=True).agg({'rel_weighted': 'sum', 'sample_size': 'sum'})
         master_stops['reliability'] = np.where(master_stops['sample_size'] > 0, master_stops['rel_weighted'] / master_stops['sample_size'], 0)
         master_stops.drop(columns=['rel_weighted'], inplace=True)
 
-        # Merge overlapping geometry to prevent map criss-crossing 
-        # Using geometry: 'first' safely merges routes that share identical physical stop corridors.
         if all_segments:
             master_segments = pd.concat(all_segments, ignore_index=True)
-            master_segments = master_segments.groupby('segment', as_index=False).agg({'avg_reliability': 'mean', 'geometry': 'first'})
+            # Grouping by both Route AND Segment seamlessly merges short-turn headsigns while preserving unique route differences 
+            master_segments = master_segments.groupby(['route_id', 'segment'], as_index=False).agg({'avg_reliability': 'mean', 'geometry': 'first'})
+            
+            # Apply geometric offset strictly to ensure different routes on the same tracks do not overlap visually
+            unique_routes = sorted(master_segments['route_id'].unique())
+            total_routes = len(unique_routes)
+            route_idx_map = {r: i for i, r in enumerate(unique_routes)}
+            
+            def offset_row(row):
+                return apply_route_offset(row['geometry'], row['route_id'], route_idx_map[row['route_id']], total_routes)
+                
+            master_segments['geometry'] = master_segments.apply(offset_row, axis=1)
             master_segments = gpd.GeoDataFrame(master_segments, geometry='geometry', crs=LATLON_PROJ)
         else:
             master_segments = gpd.GeoDataFrame()
@@ -748,47 +779,35 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
 st.title("TTC Streetcar Schedule Adherence")
 st.caption("Open-data analysis of TTC streetcar performance versus published GTFS schedules. Developed for the Transit Data Challenge 2026.")
 
-# Load core datasets
 parquet_path = get_parquet_path()
 available_routes = get_available_routes(parquet_path)
 stops, trips, stop_times, shapes = load_gtfs()
 
-# Filter Button Trigger (Only show if panel is closed)
 if not st.session_state.show_settings:
     if st.button("⚙️ Open Filter & Analysis Settings", type="primary"):
         st.session_state.show_settings = True
         st.rerun()
 
-# Render Settings Panel Conditionally
 if st.session_state.show_settings:
     with st.container():
         st.markdown("### ⚙️ Analysis & Filter Settings")
         render_filter_panel(available_routes, parquet_path, trips, stop_times, stops, shapes)
         st.markdown("---")
 
-# TABS
 tab_map, tab_spaghetti, tab_stats = st.tabs([
     "🗺️ Route Reliability Map", 
     "🍝 Spaghetti Chart", 
     "📊 Density Chart"
 ])
 
-# ----------------- TAB 1: MAP -----------------
 with tab_map:
     if not st.session_state.analysis_results:
-        # ATTEMPT TO LOAD PRECOMPUTED BOOT MAP
         precomputed = load_precomputed_network()
         if precomputed:
             st.info("🗺️ **Showing Default Network View.** Click the **⚙️ Open Filter & Analysis Settings** button above to run a custom analysis.")
-            
             stops_df = pd.DataFrame(precomputed['stops'])
             segments_df = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
-            
-            map_instance = KeplerGl(
-                height=600,
-                data={"stops": stops_df, "segments": segments_df},
-                config=precomputed['config']
-            )
+            map_instance = KeplerGl(height=600, data={"stops": stops_df, "segments": segments_df}, config=precomputed['config'])
             keplergl_static(map_instance, center_map=True)
         else:
             st.info("🗺️ **Map View is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
@@ -796,16 +815,11 @@ with tab_map:
         st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']} | {st.session_state.reliability_window}")
         results = st.session_state.analysis_results
         if 'segments_df' in results and not results['segments_df'].empty:
-            map_instance = KeplerGl(
-                height=600,
-                data={"stops": results['stops_df'], "segments": results['segments_df']},
-                config=results['kepler_config']
-            )
+            map_instance = KeplerGl(height=600, data={"stops": results['stops_df'], "segments": results['segments_df']}, config=results['kepler_config'])
             keplergl_static(map_instance, center_map=True)
         else:
             st.warning("Spatial geometry could not be built for this route.")
 
-# ----------------- TAB 2: SPAGHETTI -----------------
 with tab_spaghetti:
     if not st.session_state.analysis_results:
         st.info("🍝 **Spaghetti Chart is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
@@ -814,7 +828,6 @@ with tab_spaghetti:
     else:
         st.plotly_chart(st.session_state.analysis_results['fig_B'], use_container_width=True)
 
-# ----------------- TAB 3: STATISTICS -----------------
 with tab_stats:
     if not st.session_state.analysis_results:
         st.info("📊 **Density Chart is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
@@ -824,8 +837,4 @@ with tab_stats:
         st.plotly_chart(st.session_state.analysis_results['fig_A'], use_container_width=True)
 
 st.markdown("---")
-st.caption(
-    "**Data Privacy Statement:** All data is open public data sourced from the "
-    "City of Toronto Open Data Portal. AVL data reflects vehicle GPS locations "
-    "only — zero passenger or Personally Identifiable Information (PII)."
-)
+st.caption("**Data Privacy Statement:** All data is open public data sourced from the City of Toronto Open Data Portal. AVL data reflects vehicle GPS locations only — zero passenger or Personally Identifiable Information (PII).")
