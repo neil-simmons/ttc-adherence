@@ -680,7 +680,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                     selected_stop_ids = st.multiselect("Filter Specific Stops", options=list(stop_options.keys()), default=list(stop_options.keys()), format_func=lambda x: stop_options[x], key="stop_filter_ids")
                 else: selected_stop_ids = []
             
-            st.info("ℹ️ **What is a Time Signature?** Transit routes often have variations (like short-turns or detours). A 'Signature' groups together trips that share the *exact same physical stopping pattern*. Isolating signatures ensures the mathematical engine compares strictly identical trips.")
+            st.info("ℹ️ **What is a Time Signature?** A Signature groups trips that share the exact same stop sequence and relative scheduled timing. This ensures mathematical integrity by measuring every trip against an identical baseline.")
             
             if st.button("🔍 1. Find Available Signatures (Required)", use_container_width=True):
                 with st.spinner("Scanning historical database for matching trip patterns..."):
