@@ -268,7 +268,7 @@ def generate_kepler_config():
                             "visConfig": {
                                 "opacity": 1.0,
                                 "strokeOpacity": 1.0,
-                                "thickness": 2.0,
+                                "thickness": 1.0,
                                 "strokeColor": None,
                                 "colorRange": color_scale_config,
                                 "strokeColorRange": color_scale_config
