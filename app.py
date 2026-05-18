@@ -789,7 +789,7 @@ with tab_map:
     if not st.session_state.analysis_results:
         precomputed = load_precomputed_network()
         if precomputed:
-            st.info("🗺️ **Showing Default Network View.** Click the **⚙️ Open Filter & Analysis Settings** button above to run a custom analysis.")
+            st.info("🗺️ **Showing Default Network View.** All-Day Weekdays, All Routes. Click the **⚙️ Open Filter & Analysis Settings** button above to run a custom analysis.")
             stops_df = pd.DataFrame(precomputed['stops'])
             segments_df = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
             map_instance = KeplerGl(height=600, data={"stops": stops_df, "segments": segments_df}, config=generate_kepler_config())
@@ -825,4 +825,4 @@ with tab_stats:
         st.plotly_chart(st.session_state.analysis_results['fig_A'], use_container_width=True, height=900)
 
 st.markdown("---")
-st.caption("**Data Privacy Statement:** All data is open public data sourced from the City of Toronto Open Data Portal. AVL data reflects vehicle GPS locations only — zero passenger or Personally Identifiable Information (PII).")
+st.caption("**Data Privacy Statement:** All data is open public data sourced from the City of Toronto Open Data Portal.")
