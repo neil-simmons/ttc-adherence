@@ -669,7 +669,17 @@ with tab_map:
         precomputed = load_precomputed_network()
         if precomputed:
             st.info("🗺️ **Showing Default Network View.** Click the **⚙️ Open Filter & Analysis Settings** button above to run a custom analysis.")
-            keplergl_static(KeplerGl(height=600, config=precomputed), center_map=True)
+            
+            # Reconstruct DataFrames from JSON payload
+            stops_df = pd.DataFrame(precomputed['stops'])
+            segments_df = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
+            
+            map_instance = KeplerGl(
+                height=600,
+                data={"stops": stops_df, "segments": segments_df},
+                config=precomputed['config']
+            )
+            keplergl_static(map_instance, center_map=True)
         else:
             st.info("🗺️ **Map View is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
     else:
