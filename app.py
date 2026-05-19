@@ -25,7 +25,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # 0. CONFIGURATION & CONSTANTS
 # ==============================================================================
 st.set_page_config(
-    page_title="TTC Streetcar Reliability",
+    page_title="TTC-ScheduleWatch",
     page_icon="🚊",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -828,7 +828,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
             if "multi_routes" not in st.session_state: st.session_state.multi_routes = all_options[:2]
             
             selected_combos = st.multiselect("Select Routes & Directions", options=all_options, key="multi_routes")
-            st.info("⚠️ Calculating the entire network may take 1-3 minutes. Detailed charts will be disabled.")
+            st.info("⚠️ Calculating the entire network may a while. Detailed charts will be disabled.")
             
         else:
             selected_route = st.selectbox("Route", available_routes, key="route_selection", on_change=reset_signatures)
@@ -1006,8 +1006,8 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
 # ==============================================================================
 # 7. MAIN UI & TAB LAYOUT
 # ==============================================================================
-st.title("TTC Streetcar Schedule Adherence")
-st.caption("Open-data analysis of TTC streetcar performance versus published GTFS schedules. Developed for the Transit Data Challenge 2026.")
+st.title("TTC ScheduleWatch")
+st.caption("Open-data analysis tool of TTC streetcar performance versus published schedules (GTFS). Visualizes streetcar GPS between March 15 - May 2 2026")
 
 parquet_path = get_parquet_path()
 available_routes = get_available_routes(parquet_path)
@@ -1107,4 +1107,4 @@ with tab_stats:
         st.plotly_chart(st.session_state.analysis_results['fig_A'], use_container_width=True, height=900, config=PLOTLY_CONFIG)
 
 st.markdown("---")
-st.caption("**Data Privacy Statement:** All data is open public data sourced from the City of Toronto Open Data Portal.")
+st.caption("**Data Privacy Statement:** All data is open public data sourced from the City of Toronto Open Data Portal. © 2026 Neil Simmons. All rights reserved.")
