@@ -49,14 +49,14 @@ MAX_ALLOWED_PING_GAP_SEC = 120
 UTM_PROJ = "EPSG:32617"
 LATLON_PROJ = "EPSG:4326"
 
-# --- ANALYSIS PARAMETERS ---
+# --- ANALYSIS PARAMETERS (ENTIRE DAY) ---
 DAY_TYPE = "Weekdays"
 TIME_MODE = "Overlap Mode"
 FORCE_T0 = False
 WINDOW_EARLY = -15
 WINDOW_LATE = 120
-FILTER_START_SEC = 7 * 3600  
-FILTER_END_SEC = 9 * 3600
+FILTER_START_SEC = 0
+FILTER_END_SEC = 28 * 3600  # Covers the complete 24-hour operating day (including past midnight)
 
 def _hf(filename):
     print(f"Downloading {filename}...")
@@ -151,7 +151,7 @@ def run_precompute():
         else: day_mask = (df_hist_raw['day_of_week'] <= 4) & (~df_hist_raw['is_holiday'])
         df_hist = df_hist_raw[day_mask]
         
-        # Filter headsigns to systematically exclude short turns
+        # Case-insensitive filtration excludes Short, SHORT, or short variations automatically
         directions = [d for d in trips[trips['route_id'] == route]['trip_headsign'].dropna().unique() if "short" not in str(d).lower()]
         
         for direction in directions:
