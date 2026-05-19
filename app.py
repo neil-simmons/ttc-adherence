@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import gpd as gpd
 import geopandas as gpd
 from shapely.geometry import LineString, Point
 from shapely.ops import substring, linemerge
@@ -851,7 +850,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
         st.radio("Time Application Mode", ["Overlap Mode", "Trip Start Mode"], key="time_mode", help="Overlap: Triggers if ANY part of the trip touches your Time Window. Trip Start: Only triggers if the trip explicitly originates within your Time Window.")
         
         f_disabled = False
-        if not adv_mode and len(headsigns) > 0 and st.session_state.signatures_loaded && st.session_state.signature_list:
+        if not adv_mode and len(headsigns) > 0 and st.session_state.signatures_loaded and st.session_state.signature_list:
             if 'start_stop_idx' in locals() and start_stop_idx > 0:
                 f_disabled = True
                 
