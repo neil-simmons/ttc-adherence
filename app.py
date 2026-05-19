@@ -62,7 +62,6 @@ LATLON_PROJ = "EPSG:4326"
 
 TTC_RED = "#DA251D"
 
-# Unified config to hide Plotly logo and remove irrelevant tools
 PLOTLY_CONFIG = {
     "displaylogo": False,
     "modeBarButtonsToRemove": ["lasso2d", "select2d"]
@@ -208,7 +207,6 @@ def format_seconds_to_time(seconds):
     return f"{display_h:02d}:{m:02d} {ampm}"
 
 def clean_stop_name(name):
-    """Smartly truncates verbose GTFS stop names to reclaim chart X-axis space."""
     name = re.sub(r'(?i)\s+(East|West|North|South)\s+Side', '', name)
     name = name.split(' - ')[0].strip()
     name = name.split(' at ')[-1].strip() if ' at ' in name and len(name) > 35 else name
@@ -526,7 +524,7 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
     stops_df, segments_df = inject_legend_anchors(stops_df, segments_df)
     
     # -------------------------------------------------------------
-    # SMART Y-TICK TRUNCATION & FORMATTING 
+    # SMART Y-TICK TRUNCATION & DENSITY CHART GENERATION
     # -------------------------------------------------------------
     y_tick_texts = []
     for _, row in raw_data['st_filtered'].iterrows():
@@ -540,8 +538,31 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         if N == 0: continue
         times_min = [round(t / 60.0, 1) for t in offsets_arr]
         c_base, c_fill, c_box = (TTC_RED, 'rgba(218,37,29,0.4)', 'rgba(218,37,29,0.1)') if N < 10 else ('goldenrod', 'rgba(218,165,32,0.4)', 'rgba(218,165,32,0.1)') if N < 25 else ('#1f77b4', 'rgba(31,119,180,0.4)', 'rgba(31,119,180,0.1)')
-        fig_A.add_trace(go.Violin(x=times_min, y=np.repeat(stop.shape_dist_traveled, N), orientation='h', side='positive', scalemode='count', spanmode='hard', line_color=c_base, fillcolor=c_fill, showlegend=False, points=False, box_visible=False))
-        fig_A.add_trace(go.Box(x=times_min, y=np.repeat(stop.shape_dist_traveled - 0.05, N), orientation='h', line_color=c_base, fillcolor=c_box, boxpoints='outliers', showlegend=False))
+        
+        clean_name = clean_stop_name(stop.stop_name)
+        
+        # Explicitly formatted hover template to fix the "Trace X" confusion
+        density_hover_template = (
+            f"<b>{clean_name}</b><br>"
+            f"Sample Size: {N} runs<br>"
+            "Rel Time: %{x:.1f} mins<extra></extra>"
+        )
+        
+        fig_A.add_trace(go.Violin(
+            x=times_min, 
+            y=np.repeat(stop.shape_dist_traveled, N), 
+            name=clean_name, # Removes "trace X" labels
+            orientation='h', side='positive', scalemode='count', spanmode='hard', 
+            line_color=c_base, fillcolor=c_fill, showlegend=False, points=False, box_visible=False,
+            hovertemplate=density_hover_template
+        ))
+        fig_A.add_trace(go.Box(
+            x=times_min, 
+            y=np.repeat(stop.shape_dist_traveled - 0.05, N), 
+            name=clean_name, # Removes "trace X" labels
+            orientation='h', line_color=c_base, fillcolor=c_box, boxpoints='outliers', showlegend=False,
+            hovertemplate=density_hover_template
+        ))
 
     # -------------------------------------------------------------
     # BUILD FIG B (TIME-DISTANCE) WITH EXPLICIT HOVER TEMPLATES
@@ -749,14 +770,12 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                         on_change=_clear_isolated_trips
                     )
                     
-                    # --- NEW CORRIDOR SELECTION LOGIC ---
                     st.markdown("---")
                     st.markdown("**Corridor Selection** (Optional)")
                     
                     selected_sig = st.session_state.signature_list[selected_sig_idx]
                     sample_t = selected_sig['t_ids'][0]
                     
-                    # Get all stops for this exact signature
                     sample_stops = stop_times[stop_times['trip_id'] == sample_t].sort_values('stop_sequence')
                     sample_stops = sample_stops.merge(stops, on='stop_id', how='left')
                     if sample_stops['shape_dist_traveled'].max() > 500: 
@@ -770,7 +789,8 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                         start_stop_idx = st.selectbox(
                             "Start Stop", 
                             options=start_opts, 
-                            format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)"
+                            format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
+                            key="start_stop_idx"
                         )
                     with col_end:
                         end_opts = range(start_stop_idx + 1, len(stop_opts)) if len(stop_opts) > 1 else range(len(stop_opts))
@@ -778,7 +798,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                             "End Stop", 
                             options=end_opts, 
                             format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
-                            index=len(end_opts)-1
+                            key="end_stop_idx"
                         )
                         
                     selected_stop_ids = [s['stop_id'] for s in stop_opts[start_stop_idx : end_stop_idx + 1]]
@@ -808,7 +828,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
         f_end = st.session_state.time_slider[1].hour * 3600 + st.session_state.time_slider[1].minute * 60
         days_lbl = ",".join([d[:3] for d in st.session_state.days_selected]) if len(st.session_state.days_selected) < 7 else "All Days"
         
-        # Override force_t0 if Corridor starts mid-route to protect math stability
+        # Override force_t0 if Corridor starts mid-route
         force_t0_val = st.session_state.force_t0
         if not adv_mode and 'start_stop_idx' in locals() and start_stop_idx > 0:
             force_t0_val = False
@@ -841,6 +861,16 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                 success = execute_single_route_pipeline(parquet_path, st.session_state.route_selection, st.session_state.dir_selection, s2_vars, gtfs_route_trips, stop_times, stops, shapes)
                 
             if success:
+                # -------------------------------------------------------------------
+                # Shadow State Persistence Logic (Saves exact UI state before hiding)
+                # -------------------------------------------------------------------
+                keys_to_save = [
+                    'days_selected', 'time_slider', 'adv_mode', 'multi_routes',
+                    'route_selection', 'dir_selection', 'sig_selection',
+                    'start_stop_idx', 'end_stop_idx', 'window_slider',
+                    'time_mode', 'force_t0', 'isolated_trips'
+                ]
+                st.session_state.saved_ui_state = {k: st.session_state[k] for k in keys_to_save if k in st.session_state}
                 st.session_state.show_settings = False
                 st.rerun()
 
@@ -857,6 +887,12 @@ stops, trips, stop_times, shapes = load_gtfs()
 if not st.session_state.show_settings:
     if st.button("⚙️ Open Filter & Analysis Settings", type="primary"):
         st.session_state.show_settings = True
+        # -------------------------------------------------------------------
+        # Shadow State Restoration Logic (Pushes saved values back to widgets)
+        # -------------------------------------------------------------------
+        if 'saved_ui_state' in st.session_state:
+            for k, v in st.session_state.saved_ui_state.items():
+                st.session_state[k] = v
         st.rerun()
 
 if st.session_state.show_settings:
