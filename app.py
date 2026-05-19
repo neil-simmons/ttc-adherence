@@ -1043,6 +1043,10 @@ with tab_map:
             st.info("🗺️ **Showing Default Network View.** All-Day Weekdays, All Routes. Click the **⚙️ Open Filter & Analysis Settings** button above to run a custom analysis.")
             stops_df = pd.DataFrame(precomputed['stops'])
             segments_df = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
+            
+            # Inject anchors so the landing page colors lock to 0% - 100%
+            stops_df, segments_df = inject_legend_anchors(stops_df, segments_df)
+            
             map_instance = KeplerGl(height=600, data={"stops": stops_df, "segments": segments_df}, config=generate_kepler_config())
             keplergl_static(map_instance, center_map=True)
         else:
