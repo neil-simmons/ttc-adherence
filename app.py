@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import gpd as gpd
 import geopandas as gpd
 from shapely.geometry import LineString, Point
 from shapely.ops import substring, linemerge
@@ -570,7 +571,6 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
             side='positive', 
             scalemode='count', 
             spanmode='hard', # 'hard' strictly bounds the curve to the min and max data points (no overhang)
-            numpoints=500, # Increases KDE evaluation resolution so the tail visually reaches the extreme outliers
             width=violin_plotly_width, # Applies Global Ceiling zero-overlap logic
             line_color=c_base, fillcolor=c_fill, showlegend=False, points=False, box_visible=False,
             hovertemplate=density_hover_template
@@ -851,7 +851,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
         st.radio("Time Application Mode", ["Overlap Mode", "Trip Start Mode"], key="time_mode", help="Overlap: Triggers if ANY part of the trip touches your Time Window. Trip Start: Only triggers if the trip explicitly originates within your Time Window.")
         
         f_disabled = False
-        if not adv_mode and len(headsigns) > 0 and st.session_state.signatures_loaded and st.session_state.signature_list:
+        if not adv_mode and len(headsigns) > 0 and st.session_state.signatures_loaded && st.session_state.signature_list:
             if 'start_stop_idx' in locals() and start_stop_idx > 0:
                 f_disabled = True
                 
