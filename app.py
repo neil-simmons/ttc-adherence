@@ -195,11 +195,40 @@ def load_gtfs():
 # 3. HELPER FUNCTIONS & KEPLER CONFIG
 # ==============================================================================
 def render_plotly_with_gmaps_click(fig, height=900):
-    """Renders Plotly HTML with injected JS to open Google Maps on point click, injecting PLOTLY_CONFIG."""
+    """Renders Plotly HTML with injected JS to open Google Maps on point click and a fullscreen toggle."""
     html_bytes = fig.to_html(include_plotlyjs="require", full_html=True, config=PLOTLY_CONFIG)
     
     js_inject = """
+    <style>
+        #fullscreen-btn {
+            position: fixed;
+            top: 15px;
+            right: 15px;
+            z-index: 10000;
+            background-color: white;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 6px 12px;
+            font-family: sans-serif;
+            font-size: 12px;
+            cursor: pointer;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.15);
+            transition: background-color 0.2s;
+        }
+        #fullscreen-btn:hover { background-color: #f0f0f0; }
+    </style>
+    <button id="fullscreen-btn" onclick="toggleFullScreen()">⛶ Fullscreen</button>
     <script>
+    function toggleFullScreen() {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(err => {
+                console.log(`Error attempting to enable full-screen mode: ${err.message}`);
+            });
+        } else {
+            document.exitFullscreen();
+        }
+    }
+
     document.addEventListener('DOMContentLoaded', function() {
         var waitForPlotly = setInterval(function() {
             var plots = document.getElementsByClassName('plotly-graph-div');
@@ -220,6 +249,7 @@ def render_plotly_with_gmaps_click(fig, height=900):
     </script>
     """
     final_html = html_bytes.replace('</body>', js_inject + '</body>')
+    # Using allow="fullscreen" is important for iframes to grant browser permission
     components.html(final_html, height=height)
 
 def parse_gtfs_time(time_str):
@@ -574,51 +604,73 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         fig_A.add_trace(go.Violin(x=times_min, y=np.repeat(stop.shape_dist_traveled, N), orientation='h', side='positive', scalemode='count', spanmode='hard', line_color=c_base, fillcolor=c_fill, showlegend=False, points=False, box_visible=False))
         fig_A.add_trace(go.Box(x=times_min, y=np.repeat(stop.shape_dist_traveled - 0.05, N), orientation='h', line_color=c_base, fillcolor=c_box, boxpoints='outliers', showlegend=False))
 
+    # -------------------------------------------------------------
+    # BUILD FIG B (TIME-DISTANCE) WITH EXPLICIT HOVER TEMPLATES
+    # -------------------------------------------------------------
     fig_B = go.Figure()
+    
+    hover_tmpl = (
+        "<b>Date:</b> %{customdata[0]}<br>"
+        "<b>Trip ID:</b> %{customdata[2]}<br>"
+        "<b>Abs Time:</b> %{customdata[3]}<br>"
+        "<b>Distance:</b> %{y:.2f} km<br>"
+        "<b>Rel Time:</b> %{x:.1f} mins<br>"
+        "<i>(Click point to view on map)</i>"
+        "<extra></extra>" 
+    )
+
     for line_data in raw_data['mode_b_lines']:
         cd = np.empty((len(line_data['x']), 6), dtype=object)
         cd[:, 0], cd[:, 1], cd[:, 2], cd[:, 3], cd[:, 4], cd[:, 5] = line_data['op_date'], line_data['start_time'], line_data['t_id'], line_data['abs_time'], line_data['lat'], line_data['lon']
-        fig_B.add_trace(go.Scattergl(x=line_data['x'], y=line_data['y'], mode='lines+markers', line=dict(width=0.3), marker=dict(size=1.5), opacity=1.0, connectgaps=False, name=line_data['name'], customdata=cd))
+        fig_B.add_trace(go.Scattergl(
+            x=line_data['x'], 
+            y=line_data['y'], 
+            mode='lines+markers', 
+            line=dict(width=0.3), 
+            marker=dict(size=1.5), 
+            opacity=1.0, 
+            connectgaps=False, 
+            name=line_data['name'], 
+            customdata=cd,
+            hovertemplate=hover_tmpl
+        ))
 
-    sched_trace = go.Scattergl(x=raw_data['st_filtered']['relative_sec'] / 60.0, y=raw_data['st_filtered']['shape_dist_traveled'], mode='lines+markers', line=dict(color='#000000', width=1.4), marker=dict(symbol='circle', size=4.5, color='#000000'), name="Scheduled Baseline")
+    sched_trace = go.Scattergl(
+        x=raw_data['st_filtered']['relative_sec'] / 60.0, 
+        y=raw_data['st_filtered']['shape_dist_traveled'], 
+        mode='lines+markers', 
+        line=dict(color='#000000', width=1.4), 
+        marker=dict(symbol='circle', size=4.5, color='#000000'), 
+        name="Scheduled Baseline",
+        hovertemplate="<b>Scheduled Baseline</b><br>Distance: %{y:.2f} km<br>Rel Time: %{x:.1f} mins<extra></extra>"
+    )
     fig_A.add_trace(sched_trace)
     fig_B.add_trace(sched_trace)
     
-    # -------------------------------------------------------------
-    # INTERACTIVE BUTTONS & HOLISTIC LAYOUT
-    # Adds explicit select all / isolate buttons natively to Plotly
-    # -------------------------------------------------------------
-    num_traces = len(raw_data['mode_b_lines']) + 1
-    show_all = [True] * num_traces
-    show_baseline = ['legendonly'] * (num_traces - 1) + [True]
-
-    updatemenus = [dict(
-        type="buttons", direction="right", x=0.0, y=1.05, xanchor="left", yanchor="bottom",
-        showactive=True,
-        buttons=list([
-            dict(label="Show All Trips", method="restyle", args=[{"visible": show_all}]),
-            dict(label="Isolate Scheduled Baseline", method="restyle", args=[{"visible": show_baseline}]),
-        ])
-    )]
-
-    # Layout changes: let automargin fully control the bounds, add top padding for buttons
     common_layout = dict(
         height=900, 
         yaxis_title="Official Track Distance (km) & Stops [On-Time Reliability %]",
         xaxis_title="Relative Time (Minutes)",
         template="plotly_white", 
-        margin=dict(r=20, t=100, b=50), # Removed explicit 'l', let automargin handle it perfectly
+        margin=dict(r=260, t=70, b=50), 
         xaxis=dict(automargin=True),
         yaxis=dict(
             automargin=True, 
             tickmode='array', 
             tickvals=raw_data['st_filtered']['shape_dist_traveled'], 
             ticktext=y_tick_texts
+        ),
+        legend=dict(
+            title="Trips (Double-Click to Isolate)",
+            x=1.0, 
+            xanchor="left",
+            y=1.0,
+            yanchor="top"
         )
     )
     
     fig_A.update_layout(**common_layout, title=f"{t_str} — Density", violinmode='overlay', boxmode='overlay')
-    fig_B.update_layout(**common_layout, title=f"{t_str} — Time-Distance", updatemenus=updatemenus, hovermode='closest')
+    fig_B.update_layout(**common_layout, title=f"{t_str} — Time-Distance", hovermode='closest')
 
     st.session_state.analysis_results = {'is_multi': False, 'fig_A': fig_A, 'fig_B': fig_B, 'stops_df': stops_df, 'segments_df': segments_df, 'kepler_config': generate_kepler_config()}
     return True
