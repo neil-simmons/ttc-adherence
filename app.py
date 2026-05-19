@@ -526,6 +526,20 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
     # -------------------------------------------------------------
     # SMART Y-TICK TRUNCATION & DENSITY CHART GENERATION
     # -------------------------------------------------------------
+    
+    # Calculate zero-overlap limits dynamically based on corridor stop spacing
+    dists = raw_data['st_filtered']['shape_dist_traveled'].values
+    if len(dists) > 1:
+        diffs = np.diff(np.sort(dists))
+        valid_diffs = diffs[diffs > 0.01] # Ignore extremely tight GPS overlaps
+        global_min_gap = np.min(valid_diffs) if len(valid_diffs) > 0 else 0.2
+    else:
+        global_min_gap = 0.2
+        
+    box_offset = global_min_gap * 0.25
+    violin_max_height = global_min_gap * 0.65
+    violin_plotly_width = violin_max_height * 2 # Plotly's internal width representation for 1-sided violins
+    
     y_tick_texts = []
     for _, row in raw_data['st_filtered'].iterrows():
         clean_name = clean_stop_name(row['stop_name'])
@@ -551,16 +565,18 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         fig_A.add_trace(go.Violin(
             x=times_min, 
             y=np.repeat(stop.shape_dist_traveled, N), 
-            name=clean_name, # Removes "trace X" labels
-            orientation='h', side='positive', scalemode='width', spanmode='hard', width=1.0,
+            name=clean_name, 
+            orientation='h', side='positive', scalemode='count', spanmode='hard', 
+            width=violin_plotly_width, # Applies Global Ceiling zero-overlap logic
             line_color=c_base, fillcolor=c_fill, showlegend=False, points=False, box_visible=False,
             hovertemplate=density_hover_template
         ))
         fig_A.add_trace(go.Box(
             x=times_min, 
-            y=np.repeat(stop.shape_dist_traveled - 0.05, N), 
-            name=clean_name, # Removes "trace X" labels
-            orientation='h', line_color=c_base, fillcolor=c_box, boxpoints='outliers', showlegend=False,
+            y=np.repeat(stop.shape_dist_traveled - box_offset, N), # Applies Box dynamic offset lane
+            name=clean_name, 
+            orientation='h', width=(global_min_gap * 0.15),
+            line_color=c_base, fillcolor=c_box, boxpoints='outliers', showlegend=False,
             hovertemplate=density_hover_template
         ))
 
@@ -607,6 +623,7 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         customdata=sched_sample_sizes,
         hovertemplate="<b>Scheduled Baseline</b><br>Distance: %{y:.2f} km<br>Rel Time: %{x:.1f} mins<br>Sample Size: %{customdata} runs<extra></extra>"
     )
+    # Add baseline trace LAST so it renders on top of the density curves
     fig_A.add_trace(sched_trace)
     fig_B.add_trace(sched_trace)
     
@@ -803,13 +820,23 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                     with col_end:
                         end_opts = range(start_stop_idx + 1, len(stop_opts)) if len(stop_opts) > 1 else range(len(stop_opts))
                         end_idx_default = len(end_opts) - 1 if len(end_opts) > 0 else 0
-                        end_stop_idx = st.selectbox(
-                            "End Stop", 
-                            options=end_opts, 
-                            index=end_idx_default,
-                            format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
-                            key="end_stop_idx"
-                        )
+                        
+                        # Validate session state to prevent Streamlit widget conflicts
+                        if "end_stop_idx" in st.session_state:
+                            if st.session_state["end_stop_idx"] not in end_opts:
+                                del st.session_state["end_stop_idx"]
+                                
+                        end_kwargs = {
+                            "options": end_opts,
+                            "format_func": lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
+                            "key": "end_stop_idx"
+                        }
+                        
+                        # Only apply the default index if the user hasn't overridden it in session state
+                        if "end_stop_idx" not in st.session_state:
+                            end_kwargs["index"] = end_idx_default
+                            
+                        end_stop_idx = st.selectbox("End Stop", **end_kwargs)
                         
                     selected_stop_ids = [s['stop_id'] for s in stop_opts[start_stop_idx : end_stop_idx + 1]]
 
