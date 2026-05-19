@@ -10,7 +10,6 @@ import threading
 import json
 import datetime
 import re
-import streamlit.components.v1 as components
 from huggingface_hub import hf_hub_download
 from streamlit_keplergl import keplergl_static
 from keplergl import KeplerGl
@@ -194,7 +193,6 @@ def load_gtfs():
 # ==============================================================================
 # 3. HELPER FUNCTIONS & KEPLER CONFIG
 # ==============================================================================
-
 def parse_gtfs_time(time_str):
     if pd.isna(time_str): return np.nan
     h, m, s = map(int, time_str.split(':'))
@@ -211,12 +209,9 @@ def format_seconds_to_time(seconds):
 
 def clean_stop_name(name):
     """Smartly truncates verbose GTFS stop names to reclaim chart X-axis space."""
-    # Remove redundant directions (case insensitive)
     name = re.sub(r'(?i)\s+(East|West|North|South)\s+Side', '', name)
-    # Strip terminal suffixes (e.g. "- St Andrew Station")
     name = name.split(' - ')[0].strip()
     name = name.split(' at ')[-1].strip() if ' at ' in name and len(name) > 35 else name
-    # Truncate to max 30 chars
     if len(name) > 30:
         name = name[:27] + "..."
     return name
@@ -515,8 +510,10 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
 
     t_str = f"Route {selected_route} {selected_dir} | {s2_vars['sig_desc']} | {s2_vars['days_summary']} | {s2_vars['time_range_str']} | Mode: {s2_vars['time_mode']} | Window: {s2_vars['window_early']}s to +{s2_vars['window_late']}s"
     if s2_vars['force_t0']: t_str += " | t=0 Aligned"
+    
     if s2_vars.get('stop_filter_ids') and len(s2_vars['stop_filter_ids']) < s2_vars.get('total_route_stops', 999):
-        t_str += f" | {len(s2_vars['stop_filter_ids'])}/{s2_vars['total_route_stops']} Stops Selected"
+        t_str += f" | Corridor: {len(s2_vars['stop_filter_ids'])}/{s2_vars['total_route_stops']} Stops"
+        
     if s2_vars.get('isolated_trips'): 
         t_str += f" | Trip IDs: {', '.join(s2_vars['isolated_trips'])}" if len(s2_vars['isolated_trips']) <= 4 else f" | Filtered to {len(s2_vars['isolated_trips'])} Specific Trips"
             
@@ -530,7 +527,6 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
     
     # -------------------------------------------------------------
     # SMART Y-TICK TRUNCATION & FORMATTING 
-    # Solves overcrowding & reclaims chart X-axis space
     # -------------------------------------------------------------
     y_tick_texts = []
     for _, row in raw_data['st_filtered'].iterrows():
@@ -558,7 +554,7 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         "<b>Abs Time:</b> %{customdata[3]}<br>"
         "<b>Distance:</b> %{y:.2f} km<br>"
         "<b>Rel Time:</b> %{x:.1f} mins<br>"
-        "<i>(Click point to get Google Maps link)</i>" # <-- Updated text
+        "<i>(Click point to get Google Maps link)</i>"
         "<extra></extra>" 
     )
 
@@ -723,15 +719,6 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
             
             if len(headsigns) > 0:
                 gtfs_route_trips = gtfs_route_trips[gtfs_route_trips['trip_headsign'] == selected_dir]
-                valid_st_sidebar = stop_times[stop_times['trip_id'].isin(gtfs_route_trips['trip_id'])].copy()
-                if not valid_st_sidebar.empty:
-                    valid_st_sidebar = valid_st_sidebar.merge(stops, on='stop_id', how='left')
-                    sample_t = valid_st_sidebar['trip_id'].iloc[0]
-                    sample_stops = valid_st_sidebar[valid_st_sidebar['trip_id'] == sample_t].sort_values('stop_sequence')
-                    if sample_stops['shape_dist_traveled'].max() > 500: sample_stops['shape_dist_traveled'] /= 1000.0
-                    stop_options = {row.stop_id: f"{row.stop_name} ({row.shape_dist_traveled:.1f} km)" for _, row in sample_stops.iterrows()}
-                    selected_stop_ids = st.multiselect("Filter Specific Stops", options=list(stop_options.keys()), default=list(stop_options.keys()), format_func=lambda x: stop_options[x], key="stop_filter_ids")
-                else: selected_stop_ids = []
             
             st.info("ℹ️ **What is a Schedule Signature?** A Schedule Signature groups trips that share the exact same stop sequence and relative scheduled timing. This ensures mathematical integrity by measuring every trip against an identical baseline.")
             
@@ -761,15 +748,51 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                         key="sig_selection", 
                         on_change=_clear_isolated_trips
                     )
+                    
+                    # --- NEW CORRIDOR SELECTION LOGIC ---
+                    st.markdown("---")
+                    st.markdown("**Corridor Selection** (Optional)")
+                    
+                    selected_sig = st.session_state.signature_list[selected_sig_idx]
+                    sample_t = selected_sig['t_ids'][0]
+                    
+                    # Get all stops for this exact signature
+                    sample_stops = stop_times[stop_times['trip_id'] == sample_t].sort_values('stop_sequence')
+                    sample_stops = sample_stops.merge(stops, on='stop_id', how='left')
+                    if sample_stops['shape_dist_traveled'].max() > 500: 
+                        sample_stops['shape_dist_traveled'] /= 1000.0
+                        
+                    stop_opts = sample_stops.to_dict('records')
+                    
+                    col_start, col_end = st.columns(2)
+                    with col_start:
+                        start_opts = range(len(stop_opts) - 1) if len(stop_opts) > 1 else range(len(stop_opts))
+                        start_stop_idx = st.selectbox(
+                            "Start Stop", 
+                            options=start_opts, 
+                            format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)"
+                        )
+                    with col_end:
+                        end_opts = range(start_stop_idx + 1, len(stop_opts)) if len(stop_opts) > 1 else range(len(stop_opts))
+                        end_stop_idx = st.selectbox(
+                            "End Stop", 
+                            options=end_opts, 
+                            format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
+                            index=len(end_opts)-1
+                        )
+                        
+                    selected_stop_ids = [s['stop_id'] for s in stop_opts[start_stop_idx : end_stop_idx + 1]]
 
     with st.expander("Advanced Configuration"):
         st.slider("On-Time Reliability Window (Seconds)", min_value=-300, max_value=300, step=5, key="window_slider", help="Negative values allow early arrivals. Positive values allow late arrivals.")
         st.radio("Time Application Mode", ["Overlap Mode", "Trip Start Mode"], key="time_mode", help="Overlap: Triggers if ANY part of the trip touches your Time Window. Trip Start: Only triggers if the trip explicitly originates within your Time Window.")
         
         f_disabled = False
-        if not adv_mode and len(headsigns) > 0 and 'sample_stops' in locals():
-            if not selected_stop_ids or sample_stops.iloc[0]['stop_id'] not in selected_stop_ids: f_disabled = True
-        st.checkbox("Align to First Observed Stop (Override GTFS Start)", key="force_t0", disabled=f_disabled, help="Calculates relative delays by anchoring t=0 at the first physical GPS ping at the origin stop, instead of the official GTFS scheduled departure. Disabled if origin stop is filtered out.")
+        if not adv_mode and len(headsigns) > 0 and st.session_state.signatures_loaded and st.session_state.signature_list:
+            if 'start_stop_idx' in locals() and start_stop_idx > 0:
+                f_disabled = True
+                
+        st.checkbox("Align to First Observed Stop (Override GTFS Start)", key="force_t0", disabled=f_disabled, help="Calculates relative delays by anchoring t=0 at the first physical GPS ping at the origin stop, instead of the official GTFS scheduled departure. Disabled if Start Stop is not the true route origin.")
         
         if not adv_mode and len(headsigns) > 0 and st.session_state.signatures_loaded and st.session_state.signature_list:
             available_tids = st.session_state.signature_list[selected_sig_idx]['t_ids']
@@ -785,18 +808,23 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
         f_end = st.session_state.time_slider[1].hour * 3600 + st.session_state.time_slider[1].minute * 60
         days_lbl = ",".join([d[:3] for d in st.session_state.days_selected]) if len(st.session_state.days_selected) < 7 else "All Days"
         
+        # Override force_t0 if Corridor starts mid-route to protect math stability
+        force_t0_val = st.session_state.force_t0
+        if not adv_mode and 'start_stop_idx' in locals() and start_stop_idx > 0:
+            force_t0_val = False
+        
         s2_vars = {
             'filter_start_sec': f_start,
             'filter_end_sec': f_end,
             'time_mode': st.session_state.time_mode,
-            'force_t0': st.session_state.force_t0,
+            'force_t0': force_t0_val,
             'days_selected': st.session_state.days_selected,
             'days_summary': days_lbl,
             'time_range_str': f"{st.session_state.time_slider[0].strftime('%H:%M')}-{st.session_state.time_slider[1].strftime('%H:%M')}",
             'window_early': st.session_state.window_slider[0],
             'window_late': st.session_state.window_slider[1],
-            'stop_filter_ids': st.session_state.stop_filter_ids if not adv_mode else None,
-            'total_route_stops': len(stop_options) if (not adv_mode and 'stop_options' in locals()) else 0,
+            'stop_filter_ids': selected_stop_ids if not adv_mode and 'selected_stop_ids' in locals() else None,
+            'total_route_stops': len(stop_opts) if not adv_mode and 'stop_opts' in locals() else 0,
             'isolated_trips': st.session_state.isolated_trips if (not adv_mode and 'isolated_trips' in st.session_state) else []
         }
         
@@ -871,20 +899,17 @@ with tab_spaghetti:
     else:
         st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
         
-        # Create a placeholder above the chart for the Google Maps link
         gmaps_link_container = st.empty()
         
-        # Render the native Streamlit Plotly Chart with click-selection enabled
         event = st.plotly_chart(
             st.session_state.analysis_results['fig_B'],
             use_container_width=True,
             height=900,
             config=PLOTLY_CONFIG,
-            on_select="rerun",           # <--- This captures the click natively
+            on_select="rerun",
             selection_mode=["points"]
         )
         
-        # If a point was clicked, extract the customdata (lat/lon) and show the link
         if event and event.selection.get("points"):
             pt = event.selection["points"][0]
             if "customdata" in pt and len(pt["customdata"]) >= 6:
@@ -893,7 +918,6 @@ with tab_spaghetti:
                 lat = pt["customdata"][4]
                 lon = pt["customdata"][5]
                 
-                # Display a green banner with a clickable link
                 gmaps_link_container.success(
                     f"📍 **Selected {op_date} | Trip {t_id}:** "
                     f"[**Click here to open this location in Google Maps**]"
@@ -911,7 +935,6 @@ with tab_stats:
         st.warning("⚠️ **Charts Disabled.** Detailed density plots are only available when analyzing a single route.")
     else:
         st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
-        # Ensure we pass the config here too to hide the logo
         st.plotly_chart(st.session_state.analysis_results['fig_A'], use_container_width=True, height=900, config=PLOTLY_CONFIG)
 
 st.markdown("---")
