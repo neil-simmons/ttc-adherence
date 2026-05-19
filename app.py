@@ -749,15 +749,26 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
     if "isolated_trips" not in st.session_state: st.session_state.isolated_trips = []
     if "route_selection" not in st.session_state: st.session_state.route_selection = available_routes[0]
     
+    # Callback to reset signatures state when dependent query filters are changed
+    def reset_signatures():
+        st.session_state.signatures_loaded = False
+        st.session_state.signature_list = []
+        st.session_state.trip_start_dict = {}
+        st.session_state.isolated_trips = []
+        if 'start_stop_idx' in st.session_state:
+            del st.session_state.start_stop_idx
+        if 'end_stop_idx' in st.session_state:
+            del st.session_state.end_stop_idx
+
     with col_b:
         st.subheader("2. Time & Date Configuration")
         days_opts = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Holiday"]
-        st.multiselect("Days to Include", days_opts, key="days_selected")
-        st.slider("Time Window", min_value=datetime.time(0,0), max_value=datetime.time(23,59), format="HH:mm", key="time_slider")
+        st.multiselect("Days to Include", days_opts, key="days_selected", on_change=reset_signatures)
+        st.slider("Time Window", min_value=datetime.time(0,0), max_value=datetime.time(23,59), format="HH:mm", key="time_slider", on_change=reset_signatures)
 
     with col_a:
         st.subheader("1. Route Selection")
-        adv_mode = st.toggle("Advanced: Multi-Route Analysis", key="adv_mode")
+        adv_mode = st.toggle("Advanced: Multi-Route Analysis", key="adv_mode", on_change=reset_signatures)
         
         if adv_mode:
             all_options = get_all_route_directions(trips, available_routes)
@@ -767,10 +778,10 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
             st.info("⚠️ Calculating the entire network may take 1-3 minutes. Detailed charts will be disabled.")
             
         else:
-            selected_route = st.selectbox("Route", available_routes, key="route_selection")
+            selected_route = st.selectbox("Route", available_routes, key="route_selection", on_change=reset_signatures)
             gtfs_route_trips = trips[trips['route_id'] == selected_route].copy()
             headsigns = gtfs_route_trips['trip_headsign'].dropna().unique()
-            selected_dir = st.selectbox("Direction (Headsign)", headsigns if len(headsigns)>0 else ["No Data"], key="dir_selection")
+            selected_dir = st.selectbox("Direction (Headsign)", headsigns if len(headsigns)>0 else ["No Data"], key="dir_selection", on_change=reset_signatures)
             
             if len(headsigns) > 0:
                 gtfs_route_trips = gtfs_route_trips[gtfs_route_trips['trip_headsign'] == selected_dir]
@@ -847,7 +858,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
 
     with st.expander("Advanced Configuration"):
         st.slider("On-Time Reliability Window (Seconds)", min_value=-300, max_value=300, step=5, key="window_slider", help="Negative values allow early arrivals. Positive values allow late arrivals.")
-        st.radio("Time Application Mode", ["Overlap Mode", "Trip Start Mode"], key="time_mode", help="Overlap: Triggers if ANY part of the trip touches your Time Window. Trip Start: Only triggers if the trip explicitly originates within your Time Window.")
+        st.radio("Time Application Mode", ["Overlap Mode", "Trip Start Mode"], key="time_mode", on_change=reset_signatures, help="Overlap: Triggers if ANY part of the trip touches your Time Window. Trip Start: Only triggers if the trip explicitly originates within your Time Window.")
         
         f_disabled = False
         if not adv_mode and len(headsigns) > 0 and st.session_state.signatures_loaded and st.session_state.signature_list:
