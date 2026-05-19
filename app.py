@@ -1,3 +1,5 @@
+--- START OF FILE app (10).py ---
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -711,11 +713,14 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
     
     col_a, col_b = st.columns(2)
     
+    # Initialize defaults cleanly in session state to avoid Widget API conflict errors
     if "days_selected" not in st.session_state: st.session_state.days_selected = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
     if "time_slider" not in st.session_state: st.session_state.time_slider = (datetime.time(7, 0), datetime.time(9, 0))
     if "window_slider" not in st.session_state: st.session_state.window_slider = (-15, 120)
     if "time_mode" not in st.session_state: st.session_state.time_mode = "Overlap Mode"
     if "force_t0" not in st.session_state: st.session_state.force_t0 = False
+    if "isolated_trips" not in st.session_state: st.session_state.isolated_trips = []
+    if "route_selection" not in st.session_state: st.session_state.route_selection = available_routes[0]
     
     with col_b:
         st.subheader("2. Time & Date Configuration")
@@ -729,11 +734,13 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
         
         if adv_mode:
             all_options = get_all_route_directions(trips, available_routes)
-            selected_combos = st.multiselect("Select Routes & Directions", options=all_options, default=all_options[:2], key="multi_routes")
+            if "multi_routes" not in st.session_state: st.session_state.multi_routes = all_options[:2]
+            
+            selected_combos = st.multiselect("Select Routes & Directions", options=all_options, key="multi_routes")
             st.info("⚠️ Calculating the entire network may take 1-3 minutes. Detailed charts will be disabled.")
             
         else:
-            selected_route = st.selectbox("Route", available_routes, index=0, key="route_selection")
+            selected_route = st.selectbox("Route", available_routes, key="route_selection")
             gtfs_route_trips = trips[trips['route_id'] == selected_route].copy()
             headsigns = gtfs_route_trips['trip_headsign'].dropna().unique()
             selected_dir = st.selectbox("Direction (Headsign)", headsigns if len(headsigns)>0 else ["No Data"], key="dir_selection")
@@ -816,10 +823,31 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
         
         if not adv_mode and len(headsigns) > 0 and st.session_state.signatures_loaded and st.session_state.signature_list:
             available_tids = st.session_state.signature_list[selected_sig_idx]['t_ids']
-            st.multiselect("Isolate Specific Trip IDs", options=available_tids, default=[], key="isolated_trips", help="Explicitly filter the analysis to only process these scheduled trips.")
+            st.multiselect("Isolate Specific Trip IDs", options=available_tids, key="isolated_trips", help="Explicitly filter the analysis to only process these scheduled trips.")
 
     st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("🚀 2. Apply & Run Analysis", type="primary", use_container_width=True):
+    
+    col_run, col_reset = st.columns([3, 1])
+    
+    with col_reset:
+        if st.button("🔄 Reset Filters", use_container_width=True):
+            keys_to_clear = [
+                'days_selected', 'time_slider', 'adv_mode', 'multi_routes',
+                'route_selection', 'dir_selection', 'sig_selection',
+                'start_stop_idx', 'end_stop_idx', 'window_slider',
+                'time_mode', 'force_t0', 'isolated_trips', 'saved_ui_state',
+                'signatures_loaded', 'signature_list', 'trip_start_dict',
+                'analysis_results', 'raw_pipeline_data'
+            ]
+            for k in keys_to_clear:
+                if k in st.session_state:
+                    del st.session_state[k]
+            st.rerun()
+
+    with col_run:
+        run_btn = st.button("🚀 2. Apply & Run Analysis", type="primary", use_container_width=True)
+
+    if run_btn:
         if not adv_mode and not st.session_state.signatures_loaded:
             st.error("Please click 'Find Available Schedule Signatures' first before running a single route analysis.")
             return
