@@ -566,7 +566,11 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
             x=times_min, 
             y=np.repeat(stop.shape_dist_traveled, N), 
             name=clean_name, 
-            orientation='h', side='positive', scalemode='count', spanmode='hard', 
+            orientation='h', 
+            side='positive', 
+            scalemode='count', 
+            spanmode='hard', # 'hard' strictly bounds the curve to the min and max data points (no overhang)
+            numpoints=500, # Increases KDE evaluation resolution so the tail visually reaches the extreme outliers
             width=violin_plotly_width, # Applies Global Ceiling zero-overlap logic
             line_color=c_base, fillcolor=c_fill, showlegend=False, points=False, box_visible=False,
             hovertemplate=density_hover_template
@@ -721,7 +725,13 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
 
 def _clear_isolated_trips():
     if 'isolated_trips' in st.session_state:
-        st.session_state.isolated_trips = []
+        del st.session_state['isolated_trips']
+    if 'end_stop_idx' in st.session_state:
+        del st.session_state['end_stop_idx']
+
+def _clear_end_stop():
+    if 'end_stop_idx' in st.session_state:
+        del st.session_state['end_stop_idx']
 
 # ==============================================================================
 # 6. FILTER SETTINGS PANEL
@@ -810,33 +820,29 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                     
                     col_start, col_end = st.columns(2)
                     with col_start:
-                        start_opts = range(len(stop_opts) - 1) if len(stop_opts) > 1 else range(len(stop_opts))
+                        start_opts = list(range(len(stop_opts) - 1)) if len(stop_opts) > 1 else list(range(len(stop_opts)))
+                        
                         start_stop_idx = st.selectbox(
                             "Start Stop", 
                             options=start_opts, 
                             format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
-                            key="start_stop_idx"
+                            key="start_stop_idx",
+                            on_change=_clear_end_stop
                         )
+                        
                     with col_end:
-                        end_opts = range(start_stop_idx + 1, len(stop_opts)) if len(stop_opts) > 1 else range(len(stop_opts))
-                        end_idx_default = len(end_opts) - 1 if len(end_opts) > 0 else 0
+                        end_opts = list(range(start_stop_idx + 1, len(stop_opts))) if len(stop_opts) > 1 else list(range(len(stop_opts)))
                         
-                        # Validate session state to prevent Streamlit widget conflicts
-                        if "end_stop_idx" in st.session_state:
-                            if st.session_state["end_stop_idx"] not in end_opts:
-                                del st.session_state["end_stop_idx"]
-                                
-                        end_kwargs = {
-                            "options": end_opts,
-                            "format_func": lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
-                            "key": "end_stop_idx"
-                        }
-                        
-                        # Only apply the default index if the user hasn't overridden it in session state
-                        if "end_stop_idx" not in st.session_state:
-                            end_kwargs["index"] = end_idx_default
+                        # Only set default to the last option if there is NO memory of a previous selection
+                        if "end_stop_idx" not in st.session_state or st.session_state["end_stop_idx"] not in end_opts:
+                            st.session_state["end_stop_idx"] = end_opts[-1] if end_opts else 0
                             
-                        end_stop_idx = st.selectbox("End Stop", **end_kwargs)
+                        end_stop_idx = st.selectbox(
+                            "End Stop", 
+                            options=end_opts, 
+                            format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
+                            key="end_stop_idx"
+                        )
                         
                     selected_stop_ids = [s['stop_id'] for s in stop_opts[start_stop_idx : end_stop_idx + 1]]
 
