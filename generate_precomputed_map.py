@@ -70,8 +70,8 @@ def parse_gtfs_time(time_str):
 def load_data():
     stops = pd.read_csv(_hf("stops.txt"), usecols=['stop_id', 'stop_name', 'stop_lat', 'stop_lon'], dtype={'stop_id': 'string[pyarrow]', 'stop_name': 'string[pyarrow]'})
     stops['stop_id'] = stops['stop_id'].astype('category')
-    stops['stop_lat'] = pd.to_numeric(stops['stop_lat'], downcast='float')
-    stops['stop_lon'] = pd.to_numeric(stops['stop_lon'], downcast='float')
+    stops['stop_lat'] = pd.to_numeric(stops['stop_lat'])
+    stops['stop_lon'] = pd.to_numeric(stops['stop_lon'])
 
     trips = pd.read_csv(_hf("trips.txt"), usecols=['route_id', 'trip_id', 'shape_id', 'trip_headsign'], dtype='string[pyarrow]')
     trips['trip_id'] = trips['trip_id'].str.replace(r'\.0$', '', regex=True).str.strip().astype('category')
@@ -119,8 +119,9 @@ def load_route_data(path, selected_route):
     return df
 
 def apply_route_offset(geom, route_index, total_routes):
+    """Applies a visual offset to geometries that share the same physical tracks."""
     if total_routes <= 1 or geom is None: return geom
-    offset_step = 0.00012 
+    offset_step = 0.00008 
     offset_val = (route_index - (total_routes - 1) / 2.0) * offset_step
     
     if offset_val == 0: return geom
@@ -150,7 +151,8 @@ def run_precompute():
         else: day_mask = (df_hist_raw['day_of_week'] <= 4) & (~df_hist_raw['is_holiday'])
         df_hist = df_hist_raw[day_mask]
         
-        directions = trips[trips['route_id'] == route]['trip_headsign'].dropna().unique()
+        # Filter headsigns to systematically exclude short turns
+        directions = [d for d in trips[trips['route_id'] == route]['trip_headsign'].dropna().unique() if "short" not in str(d).lower()]
         
         for direction in directions:
             print(f"  -> Direction: {direction}")
@@ -213,6 +215,7 @@ def run_precompute():
                     if (TIME_MODE == "Trip Start Mode" and FILTER_START_SEC <= anchor_sec <= FILTER_END_SEC) or (TIME_MODE != "Trip Start Mode" and any(FILTER_START_SEC <= t <= FILTER_END_SEC for t in interp.values())):
                         for s_id, t in interp.items(): actual_times[s_id].append(t - anchor_sec)
 
+                # Geometry Mapping Updates
                 rel_dict, rel_vals, sample_sizes = {}, {}, {}
                 for stop in st_filtered.itertuples():
                     arr = actual_times[stop.stop_id]
@@ -228,11 +231,9 @@ def run_precompute():
                 stops_df['sample_size'] = stops_df['stop_id'].map(sample_sizes)
                 all_stops.append(stops_df)
 
+                # shapely Path Tracing
                 shape_coords = list(zip(shp_pts['shape_pt_lon'].astype(float), shp_pts['shape_pt_lat'].astype(float)))
                 full_route_line = LineString(shape_coords) if len(shape_coords) > 1 else None
-
-                # UNIQUE NAME PASSED HERE TO ENSURE DIRECTIONS SEPARATE
-                selection_name = f"{route} | {direction}"
 
                 segs = []
                 for i in range(len(st_filtered) - 1):
@@ -254,7 +255,7 @@ def run_precompute():
                         geom = LineString([(lon1, lat1), (lon2, lat2)])
                         
                     segs.append({
-                        'route_id': selection_name,
+                        'route_id': route,
                         'segment': f"{s1.stop_name} to {s2.stop_name}",
                         'avg_reliability': (rel_vals[s1.stop_id] + rel_vals[s2.stop_id]) / 2.0,
                         'geometry': geom
@@ -271,8 +272,10 @@ def run_precompute():
     master_segments = gpd.GeoDataFrame()
     if all_segments:
         master_segments = pd.concat(all_segments, ignore_index=True)
+        # Group by route_id AND segment to ensure overlapping short-turns merge seamlessly, but separate routes stay distinct
         master_segments = master_segments.groupby(['route_id', 'segment'], as_index=False).agg({'avg_reliability': 'mean', 'geometry': 'first'})
         
+        # APPLY OFFSET FOR PARALLEL ROUTES
         unique_routes = sorted(master_segments['route_id'].unique())
         total_routes = len(unique_routes)
         route_idx_map = {r: i for i, r in enumerate(unique_routes)}
@@ -282,7 +285,7 @@ def run_precompute():
     output = {
         "stops": master_stops.to_dict(orient='records'),
         "segments": json.loads(master_segments.to_json()) if not master_segments.empty else {},
-        "config": {}
+        "config": {} # Left empty to ensure app.py overrides it with fresh styling
     }
     
     with open('precomputed_network.json', 'w') as f:
