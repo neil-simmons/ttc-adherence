@@ -227,12 +227,7 @@ def inject_legend_anchors(stops_df, segments_df):
     d_stop_0, d_stop_100 = stops_df.iloc[0].copy(), stops_df.iloc[0].copy()
     d_stop_0['reliability'], d_stop_0['sample_size'], d_stop_0['stop_lat'], d_stop_0['stop_lon'] = 0.0, 0, np.nan, np.nan
     d_stop_100['reliability'], d_stop_100['sample_size'], d_stop_100['stop_lat'], d_stop_100['stop_lon'] = 100.0, 0, np.nan, np.nan
-    
-    # Generate empty Point geometries for GeoPandas compatibility
-    stops_df_geo = gpd.GeoDataFrame(stops_df, geometry=gpd.points_from_xy(stops_df.stop_lon, stops_df.stop_lat), crs=LATLON_PROJ)
-    d_stop_0_geo = gpd.GeoDataFrame([d_stop_0], geometry=[Point()], crs=LATLON_PROJ)
-    d_stop_100_geo = gpd.GeoDataFrame([d_stop_100], geometry=[Point()], crs=LATLON_PROJ)
-    s_gdf = pd.concat([stops_df_geo, d_stop_0_geo, d_stop_100_geo], ignore_index=True)
+    s_df = pd.concat([stops_df, pd.DataFrame([d_stop_0, d_stop_100])], ignore_index=True)
     
     # Clone segment anchors and set geometry to None (null GeoJSON geometry)
     d_seg_0, d_seg_100 = segments_df.iloc[0].copy(), segments_df.iloc[0].copy()
@@ -243,7 +238,7 @@ def inject_legend_anchors(stops_df, segments_df):
     d_seg_100['geometry'] = None
     
     seg_df = pd.concat([segments_df, gpd.GeoDataFrame([d_seg_0, d_seg_100], geometry='geometry', crs=LATLON_PROJ)], ignore_index=True)
-    return s_gdf, seg_df
+    return s_df, seg_df
 
 def generate_kepler_config():
     custom_20_colors = [
@@ -267,21 +262,15 @@ def generate_kepler_config():
                         "visualChannels": {"colorField": {"name": "avg_reliability", "type": "real"}, "colorScale": "quantize", "strokeColorField": {"name": "avg_reliability", "type": "real"}, "strokeColorScale": "quantize"}
                     },
                     {
-                        "id": "stops", "type": "geojson",  # Force to GeoJSON type to enforce rendering layer order
+                        "id": "stops", "type": "point",
                         "config": {
-                            "dataId": "stops", "label": "Stops", "columns": {"geojson": "geometry"}, "isVisible": True,
-                            "visConfig": {
-                                "radiusRange": [3, 9], "opacity": 1.0, "filled": True, "outline": True, "thickness": 1.5, 
-                                "strokeColor": [255, 255, 255], "colorRange": color_scale_config, "strokeColorRange": color_scale_config
-                            }
+                            "dataId": "stops", "label": "Stops", "columns": {"lat": "stop_lat", "lng": "stop_lon"}, "isVisible": True,
+                            "visConfig": {"radiusRange": [3, 9], "opacity": 1.0, "filled": True, "outline": True, "thickness": 1.5, "strokeColor": [255, 255, 255], "colorRange": color_scale_config}
                         },
-                        "visualChannels": {
-                            "colorField": {"name": "reliability", "type": "real"}, "colorScale": "quantize", 
-                            "radiusField": {"name": "sample_size", "type": "integer"}, "radiusScale": "linear"
-                        }
+                        "visualChannels": {"colorField": {"name": "reliability", "type": "real"}, "colorScale": "quantize", "sizeField": {"name": "sample_size", "type": "integer"}, "sizeScale": "linear"}
                     }
                 ],
-                "layerOrder": ["segments", "stops"],  # Force stops layer to draw on top of segments
+                "layerOrder": ["segments", "stops"],  # Stops render on top of segments
                 "interactionConfig": {
                     "tooltip": {
                         "fieldsToShow": {
@@ -872,16 +861,9 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                         if "end_stop_idx" not in st.session_state or st.session_state["end_stop_idx"] not in end_opts:
                             st.session_state["end_stop_idx"] = end_opts[-1] if end_opts else 0
                             
-                        # Explicitly track and calculate index position to prevent Streamlit reset anomalies
-                        try:
-                            default_index = end_opts.index(st.session_state["end_stop_idx"])
-                        except ValueError:
-                            default_index = len(end_opts) - 1 if end_opts else 0
-
                         end_stop_idx = st.selectbox(
                             "End Stop", 
                             options=end_opts, 
-                            index=default_index,
                             format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
                             key="end_stop_idx"
                         )
@@ -1019,10 +1001,8 @@ with tab_map:
         if precomputed:
             st.info("🗺️ **Showing Default Network View.** All-Day Weekdays, All Routes. Click the **⚙️ Open Filter & Analysis Settings** button above to run a custom analysis.")
             stops_df = pd.DataFrame(precomputed['stops'])
-            # Create GeoDataFrame for precomputed stops to guarantee stops-on-top rendering order
-            stops_gdf = gpd.GeoDataFrame(stops_df, geometry=gpd.points_from_xy(stops_df.stop_lon, stops_df.stop_lat), crs=LATLON_PROJ)
             segments_df = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
-            map_instance = KeplerGl(height=600, data={"stops": stops_gdf, "segments": segments_df}, config=generate_kepler_config())
+            map_instance = KeplerGl(height=600, data={"stops": stops_df, "segments": segments_df}, config=generate_kepler_config())
             keplergl_static(map_instance, center_map=True)
         else:
             st.info("🗺️ **Map View is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
