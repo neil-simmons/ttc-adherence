@@ -9,6 +9,7 @@ import gc
 import threading
 import json
 import datetime
+import re
 import streamlit.components.v1 as components
 from huggingface_hub import hf_hub_download
 from streamlit_keplergl import keplergl_static
@@ -61,6 +62,12 @@ UTM_PROJ   = "EPSG:32617"
 LATLON_PROJ = "EPSG:4326"
 
 TTC_RED = "#DA251D"
+
+# Unified config to hide Plotly logo and remove irrelevant tools
+PLOTLY_CONFIG = {
+    "displaylogo": False,
+    "modeBarButtonsToRemove": ["lasso2d", "select2d"]
+}
 
 @st.cache_resource
 def get_network_lock():
@@ -188,8 +195,8 @@ def load_gtfs():
 # 3. HELPER FUNCTIONS & KEPLER CONFIG
 # ==============================================================================
 def render_plotly_with_gmaps_click(fig, height=900):
-    """Renders Plotly HTML with injected JS to open Google Maps on point click."""
-    html_bytes = fig.to_html(include_plotlyjs="require", full_html=True)
+    """Renders Plotly HTML with injected JS to open Google Maps on point click, injecting PLOTLY_CONFIG."""
+    html_bytes = fig.to_html(include_plotlyjs="require", full_html=True, config=PLOTLY_CONFIG)
     
     js_inject = """
     <script>
@@ -228,6 +235,18 @@ def format_seconds_to_time(seconds):
     ampm = "AM" if display_h < 12 else "PM"
     display_h = 12 if display_h in (0, 12) else display_h % 12
     return f"{display_h:02d}:{m:02d} {ampm}"
+
+def clean_stop_name(name):
+    """Smartly truncates verbose GTFS stop names to reclaim chart X-axis space."""
+    # Remove redundant directions (case insensitive)
+    name = re.sub(r'(?i)\s+(East|West|North|South)\s+Side', '', name)
+    # Strip terminal suffixes (e.g. "- St Andrew Station")
+    name = name.split(' - ')[0].strip()
+    name = name.split(' at ')[-1].strip() if ' at ' in name and len(name) > 35 else name
+    # Truncate to max 30 chars
+    if len(name) > 30:
+        name = name[:27] + "..."
+    return name
 
 def load_precomputed_network():
     try:
@@ -296,7 +315,6 @@ def generate_kepler_config():
 # 4. MODULARIZED PIPELINE FUNCTIONS
 # ==============================================================================
 def apply_day_filters(df, days_selected):
-    """Maps custom string selections to GTFS date representations."""
     day_mapping = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3, "Friday": 4, "Saturday": 5, "Sunday": 6}
     selected_dow = [day_mapping[d] for d in days_selected if d != "Holiday"]
     
@@ -310,7 +328,6 @@ def apply_day_filters(df, days_selected):
     return df[day_mask]
 
 def get_route_signatures(df_hist_raw, valid_trips, stop_times, stops, filter_start_sec, filter_end_sec, days_selected):
-    """Analyzes the exact stopping pattern of scheduled trips to group identical paths."""
     df_hist_filtered = apply_day_filters(df_hist_raw, days_selected)
     
     valid_st = stop_times[stop_times['trip_id'].isin(valid_trips['trip_id'])].copy()
@@ -507,7 +524,6 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
 def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2_vars, gtfs_route_trips, stop_times, stops, shapes):
     df_hist_raw = load_route_data(parquet_path, selected_route)
     
-    # Isolate strictly to the signature's trips (or user override)
     base_trips = s2_vars['signature_t_ids']
     if s2_vars['isolated_trips']: 
         trip_list = [t for t in base_trips if t in s2_vars['isolated_trips']]
@@ -524,20 +540,12 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         st.error("Tracking failed or no historical data found for these scheduled trips.")
         return False
 
-    # Dynamic Title Generation (Updated with requested filter info)
     t_str = f"Route {selected_route} {selected_dir} | {s2_vars['sig_desc']} | {s2_vars['days_summary']} | {s2_vars['time_range_str']} | Mode: {s2_vars['time_mode']} | Window: {s2_vars['window_early']}s to +{s2_vars['window_late']}s"
-    
-    if s2_vars['force_t0']: 
-        t_str += " | t=0 Aligned"
-        
+    if s2_vars['force_t0']: t_str += " | t=0 Aligned"
     if s2_vars.get('stop_filter_ids') and len(s2_vars['stop_filter_ids']) < s2_vars.get('total_route_stops', 999):
         t_str += f" | {len(s2_vars['stop_filter_ids'])}/{s2_vars['total_route_stops']} Stops Selected"
-        
     if s2_vars.get('isolated_trips'): 
-        if len(s2_vars['isolated_trips']) <= 4:
-            t_str += f" | Trip IDs: {', '.join(s2_vars['isolated_trips'])}"
-        else:
-            t_str += f" | Filtered to {len(s2_vars['isolated_trips'])} Specific Trips"
+        t_str += f" | Trip IDs: {', '.join(s2_vars['isolated_trips'])}" if len(s2_vars['isolated_trips']) <= 4 else f" | Filtered to {len(s2_vars['isolated_trips'])} Specific Trips"
             
     raw_data['title_info'] = t_str
     st.session_state.raw_pipeline_data = raw_data
@@ -547,9 +555,15 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
     )
     stops_df, segments_df = inject_legend_anchors(stops_df, segments_df)
     
-    # Pre-formatting the explicit reliability labels onto the ticks
-    y_tick_texts = [f"{row['stop_name']} ({row['shape_dist_traveled']:.1f} km) [Rel: {reliability_dict[row['stop_id']]}]" for _, row in raw_data['st_filtered'].iterrows()]
-    
+    # -------------------------------------------------------------
+    # SMART Y-TICK TRUNCATION & FORMATTING 
+    # Solves overcrowding & reclaims chart X-axis space
+    # -------------------------------------------------------------
+    y_tick_texts = []
+    for _, row in raw_data['st_filtered'].iterrows():
+        clean_name = clean_stop_name(row['stop_name'])
+        y_tick_texts.append(f"{clean_name} ({row['shape_dist_traveled']:.1f}km) | Rel: {reliability_dict[row['stop_id']]}")
+        
     fig_A = go.Figure()
     for stop in raw_data['st_filtered'].itertuples():
         offsets_arr = raw_data['actual_relative_times'][stop.stop_id]
@@ -557,8 +571,6 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         if N == 0: continue
         times_min = [round(t / 60.0, 1) for t in offsets_arr]
         c_base, c_fill, c_box = (TTC_RED, 'rgba(218,37,29,0.4)', 'rgba(218,37,29,0.1)') if N < 10 else ('goldenrod', 'rgba(218,165,32,0.4)', 'rgba(218,165,32,0.1)') if N < 25 else ('#1f77b4', 'rgba(31,119,180,0.4)', 'rgba(31,119,180,0.1)')
-        
-        # spanmode='hard' forces lines to stop at the whiskers
         fig_A.add_trace(go.Violin(x=times_min, y=np.repeat(stop.shape_dist_traveled, N), orientation='h', side='positive', scalemode='count', spanmode='hard', line_color=c_base, fillcolor=c_fill, showlegend=False, points=False, box_visible=False))
         fig_A.add_trace(go.Box(x=times_min, y=np.repeat(stop.shape_dist_traveled - 0.05, N), orientation='h', line_color=c_base, fillcolor=c_box, boxpoints='outliers', showlegend=False))
 
@@ -572,13 +584,30 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
     fig_A.add_trace(sched_trace)
     fig_B.add_trace(sched_trace)
     
-    # Updated common layout with strict margins and clear labeling
+    # -------------------------------------------------------------
+    # INTERACTIVE BUTTONS & HOLISTIC LAYOUT
+    # Adds explicit select all / isolate buttons natively to Plotly
+    # -------------------------------------------------------------
+    num_traces = len(raw_data['mode_b_lines']) + 1
+    show_all = [True] * num_traces
+    show_baseline = ['legendonly'] * (num_traces - 1) + [True]
+
+    updatemenus = [dict(
+        type="buttons", direction="right", x=0.0, y=1.05, xanchor="left", yanchor="bottom",
+        showactive=True,
+        buttons=list([
+            dict(label="Show All Trips", method="restyle", args=[{"visible": show_all}]),
+            dict(label="Isolate Scheduled Baseline", method="restyle", args=[{"visible": show_baseline}]),
+        ])
+    )]
+
+    # Layout changes: let automargin fully control the bounds, add top padding for buttons
     common_layout = dict(
         height=900, 
         yaxis_title="Official Track Distance (km) & Stops [On-Time Reliability %]",
         xaxis_title="Relative Time (Minutes)",
         template="plotly_white", 
-        margin=dict(l=10, r=50, t=60, b=50), # Prevent horizontal clipping
+        margin=dict(r=20, t=100, b=50), # Removed explicit 'l', let automargin handle it perfectly
         xaxis=dict(automargin=True),
         yaxis=dict(
             automargin=True, 
@@ -589,7 +618,7 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
     )
     
     fig_A.update_layout(**common_layout, title=f"{t_str} — Density", violinmode='overlay', boxmode='overlay')
-    fig_B.update_layout(**common_layout, title=f"{t_str} — Time-Distance")
+    fig_B.update_layout(**common_layout, title=f"{t_str} — Time-Distance", updatemenus=updatemenus, hovermode='closest')
 
     st.session_state.analysis_results = {'is_multi': False, 'fig_A': fig_A, 'fig_B': fig_B, 'stops_df': stops_df, 'segments_df': segments_df, 'kepler_config': generate_kepler_config()}
     return True
@@ -614,7 +643,6 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
             gtfs_route_trips = trips[(trips['route_id'] == route) & (trips['trip_headsign'] == direction)]
             df_hist = load_route_data(parquet_path, route)
             
-            # Extract auto signatures for multi-route without UI intervention
             sig_list, trip_start_dict = get_route_signatures(
                 df_hist, gtfs_route_trips, stop_times, stops, s2_vars['filter_start_sec'], s2_vars['filter_end_sec'], s2_vars['days_selected']
             )
@@ -659,8 +687,6 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
     finally:
         lock.release()
 
-# Callback to clear isolated trips when signature selection changes
-# This prevents the UI from throwing silent stale-state rendering bugs (Ghost Widgets)
 def _clear_isolated_trips():
     if 'isolated_trips' in st.session_state:
         st.session_state.isolated_trips = []
@@ -673,7 +699,6 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
     
     col_a, col_b = st.columns(2)
     
-    # Defaults in session state
     if "days_selected" not in st.session_state: st.session_state.days_selected = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
     if "time_slider" not in st.session_state: st.session_state.time_slider = (datetime.time(7, 0), datetime.time(9, 0))
     if "window_slider" not in st.session_state: st.session_state.window_slider = (-15, 120)
@@ -734,7 +759,6 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                     st.warning("No GTFS Schedule Signatures scheduled to run within your current Time Window.")
                 else:
                     sig_opts = {i: f"({s['runs']} recorded runs) | {s['orig']} → {s['dest']} | Scheduled: {format_seconds_to_time(s['min_sec'])}–{format_seconds_to_time(s['max_sec'])}" for i, s in enumerate(st.session_state.signature_list)}
-                    # Trigger cache clear to prevent the ghost UI rendering bug
                     selected_sig_idx = st.selectbox(
                         "Select Schedule Signature", 
                         options=list(sig_opts.keys()), 
@@ -743,7 +767,6 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                         on_change=_clear_isolated_trips
                     )
 
-    # Advanced Configuration Expander
     with st.expander("Advanced Configuration"):
         st.slider("On-Time Reliability Window (Seconds)", min_value=-300, max_value=300, step=5, key="window_slider", help="Negative values allow early arrivals. Positive values allow late arrivals.")
         st.radio("Time Application Mode", ["Overlap Mode", "Trip Start Mode"], key="time_mode", help="Overlap: Triggers if ANY part of the trip touches your Time Window. Trip Start: Only triggers if the trip explicitly originates within your Time Window.")
@@ -757,7 +780,6 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
             available_tids = st.session_state.signature_list[selected_sig_idx]['t_ids']
             st.multiselect("Isolate Specific Trip IDs", options=available_tids, default=[], key="isolated_trips", help="Explicitly filter the analysis to only process these scheduled trips.")
 
-    # Execution Action
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🚀 2. Apply & Run Analysis", type="primary", use_container_width=True):
         if not adv_mode and not st.session_state.signatures_loaded:
@@ -853,7 +875,6 @@ with tab_spaghetti:
         st.warning("⚠️ **Charts Disabled.** Detailed trip visualizations are only available when analyzing a single route.")
     else:
         st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
-        # Using the custom HTML renderer to inject Javascript for Google Maps clicking
         render_plotly_with_gmaps_click(st.session_state.analysis_results['fig_B'], height=900)
 
 with tab_stats:
@@ -863,7 +884,8 @@ with tab_stats:
         st.warning("⚠️ **Charts Disabled.** Detailed density plots are only available when analyzing a single route.")
     else:
         st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
-        st.plotly_chart(st.session_state.analysis_results['fig_A'], use_container_width=True, height=900)
+        # Ensure we pass the config here too to hide the logo
+        st.plotly_chart(st.session_state.analysis_results['fig_A'], use_container_width=True, height=900, config=PLOTLY_CONFIG)
 
 st.markdown("---")
 st.caption("**Data Privacy Statement:** All data is open public data sourced from the City of Toronto Open Data Portal.")
