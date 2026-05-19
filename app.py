@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import geopandas as gpd
+import gpd
 from shapely.geometry import LineString, Point
 from shapely.ops import substring, linemerge
 import plotly.graph_objects as go
@@ -223,7 +223,7 @@ def load_precomputed_network():
 def inject_legend_anchors(stops_df, segments_df):
     if stops_df.empty or segments_df.empty: return stops_df, segments_df
     
-    # Clone stop anchors and set coordinates to NaN so they are completely ignored by the renderer
+    # Clone stop anchors and set coordinates to NaN so they are ignored by the renderer
     d_stop_0, d_stop_100 = stops_df.iloc[0].copy(), stops_df.iloc[0].copy()
     d_stop_0['reliability'], d_stop_0['sample_size'], d_stop_0['stop_lat'], d_stop_0['stop_lon'] = 0.0, 0, np.nan, np.nan
     d_stop_100['reliability'], d_stop_100['sample_size'], d_stop_100['stop_lat'], d_stop_100['stop_lon'] = 100.0, 0, np.nan, np.nan
@@ -270,7 +270,7 @@ def generate_kepler_config():
                         "visualChannels": {"colorField": {"name": "reliability", "type": "real"}, "colorScale": "quantize", "sizeField": {"name": "sample_size", "type": "integer"}, "sizeScale": "linear"}
                     }
                 ],
-                "layerOrder": ["stops", "segments"],
+                "layerOrder": ["segments", "stops"],  # Stops render on top of segments
                 "interactionConfig": {
                     "tooltip": {
                         "fieldsToShow": {
@@ -657,7 +657,8 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
             xanchor="left",
             y=1.0,
             yanchor="top"
-        )
+        ),
+        dragmode="zoom"  # Standard zoom-box selected initially
     )
     
     fig_A.update_layout(**common_layout, title=f"{t_str} — Density", violinmode='overlay', boxmode='overlay')
@@ -736,9 +737,14 @@ def _clear_isolated_trips():
     if 'end_stop_idx' in st.session_state:
         del st.session_state['end_stop_idx']
 
-def _clear_end_stop():
-    if 'end_stop_idx' in st.session_state:
-        del st.session_state['end_stop_idx']
+# Smart callback validation for corridor selectors
+def validate_corridor_selection():
+    new_start = st.session_state.get("start_stop_idx", 0)
+    curr_end = st.session_state.get("end_stop_idx", 0)
+    # If the user sets the start stop past or equal to the end stop, reset end stop
+    if curr_end <= new_start:
+        if 'end_stop_idx' in st.session_state:
+            del st.session_state['end_stop_idx']
 
 # ==============================================================================
 # 6. FILTER SETTINGS PANEL
@@ -845,7 +851,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                             options=start_opts, 
                             format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
                             key="start_stop_idx",
-                            on_change=_clear_end_stop
+                            on_change=validate_corridor_selection
                         )
                         
                     with col_end:
