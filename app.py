@@ -222,13 +222,21 @@ def load_precomputed_network():
 
 def inject_legend_anchors(stops_df, segments_df):
     if stops_df.empty or segments_df.empty: return stops_df, segments_df
+    
+    # Clone stop anchors and relocate to (0,0) to prevent map overlays
     d_stop_0, d_stop_100 = stops_df.iloc[0].copy(), stops_df.iloc[0].copy()
-    d_stop_0['reliability'], d_stop_0['sample_size'] = 0.0, 0
-    d_stop_100['reliability'], d_stop_100['sample_size'] = 100.0, 0
+    d_stop_0['reliability'], d_stop_0['sample_size'], d_stop_0['stop_lat'], d_stop_0['stop_lon'] = 0.0, 0, 0.0, 0.0
+    d_stop_100['reliability'], d_stop_100['sample_size'], d_stop_100['stop_lat'], d_stop_100['stop_lon'] = 100.0, 0, 0.0, 0.0
     s_df = pd.concat([stops_df, pd.DataFrame([d_stop_0, d_stop_100])], ignore_index=True)
     
+    # Clone segment anchors and relocate geometry to (0,0)
     d_seg_0, d_seg_100 = segments_df.iloc[0].copy(), segments_df.iloc[0].copy()
-    d_seg_0['avg_reliability'], d_seg_100['avg_reliability'] = 0.0, 100.0
+    d_seg_0['avg_reliability'] = 0.0
+    d_seg_0['geometry'] = LineString([(0, 0), (0.0001, 0.0001)])
+    
+    d_seg_100['avg_reliability'] = 100.0
+    d_seg_100['geometry'] = LineString([(0, 0), (0.0001, 0.0001)])
+    
     seg_df = pd.concat([segments_df, gpd.GeoDataFrame([d_seg_0, d_seg_100], geometry='geometry', crs=LATLON_PROJ)], ignore_index=True)
     return s_df, seg_df
 
