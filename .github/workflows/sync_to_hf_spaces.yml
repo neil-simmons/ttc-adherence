@@ -29,4 +29,4 @@ jobs:
 
           # 3. Force push this single-commit branch to the main branch of your Space
           # REPLACE 'neil-simmons' and 'TrackTO' if they are different
-          git push --force https://neil-simmons:$HF_TOKEN@huggingface.co/spaces/neil-simmons/TrackTO temp-branch:main
+          git push --force https://neil-simmons:$HF_TOKEN@huggingface.co/spaces/neil-simmons/TTC-ScheduleWatch temp-branch:main
