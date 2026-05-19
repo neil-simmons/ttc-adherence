@@ -552,7 +552,7 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
             x=times_min, 
             y=np.repeat(stop.shape_dist_traveled, N), 
             name=clean_name, # Removes "trace X" labels
-            orientation='h', side='positive', scalemode='count', spanmode='hard', 
+            orientation='h', side='positive', scalemode='width', spanmode='hard', width=1.0,
             line_color=c_base, fillcolor=c_fill, showlegend=False, points=False, box_visible=False,
             hovertemplate=density_hover_template
         ))
@@ -595,6 +595,8 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
             hovertemplate=hover_tmpl
         ))
 
+    sched_sample_sizes = [len(raw_data['actual_relative_times'][stop_id]) for stop_id in raw_data['st_filtered']['stop_id']]
+
     sched_trace = go.Scattergl(
         x=raw_data['st_filtered']['relative_sec'] / 60.0, 
         y=raw_data['st_filtered']['shape_dist_traveled'], 
@@ -602,7 +604,8 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         line=dict(color='#000000', width=1.4), 
         marker=dict(symbol='circle', size=4.5, color='#000000'), 
         name="Scheduled Baseline",
-        hovertemplate="<b>Scheduled Baseline</b><br>Distance: %{y:.2f} km<br>Rel Time: %{x:.1f} mins<extra></extra>"
+        customdata=sched_sample_sizes,
+        hovertemplate="<b>Scheduled Baseline</b><br>Distance: %{y:.2f} km<br>Rel Time: %{x:.1f} mins<br>Sample Size: %{customdata} runs<extra></extra>"
     )
     fig_A.add_trace(sched_trace)
     fig_B.add_trace(sched_trace)
@@ -799,9 +802,11 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                         )
                     with col_end:
                         end_opts = range(start_stop_idx + 1, len(stop_opts)) if len(stop_opts) > 1 else range(len(stop_opts))
+                        end_idx_default = len(end_opts) - 1 if len(end_opts) > 0 else 0
                         end_stop_idx = st.selectbox(
                             "End Stop", 
                             options=end_opts, 
+                            index=end_idx_default,
                             format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
                             key="end_stop_idx"
                         )
