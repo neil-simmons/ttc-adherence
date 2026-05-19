@@ -194,63 +194,6 @@ def load_gtfs():
 # ==============================================================================
 # 3. HELPER FUNCTIONS & KEPLER CONFIG
 # ==============================================================================
-def render_plotly_with_gmaps_click(fig, height=900):
-    """Renders Plotly HTML with injected JS to open Google Maps on point click and a fullscreen toggle."""
-    html_bytes = fig.to_html(include_plotlyjs="require", full_html=True, config=PLOTLY_CONFIG)
-    
-    js_inject = """
-    <style>
-        #fullscreen-btn {
-            position: fixed;
-            top: 15px;
-            right: 15px;
-            z-index: 10000;
-            background-color: white;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            padding: 6px 12px;
-            font-family: sans-serif;
-            font-size: 12px;
-            cursor: pointer;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.15);
-            transition: background-color 0.2s;
-        }
-        #fullscreen-btn:hover { background-color: #f0f0f0; }
-    </style>
-    <button id="fullscreen-btn" onclick="toggleFullScreen()">⛶ Fullscreen</button>
-    <script>
-    function toggleFullScreen() {
-        if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen().catch(err => {
-                console.log(`Error attempting to enable full-screen mode: ${err.message}`);
-            });
-        } else {
-            document.exitFullscreen();
-        }
-    }
-
-    document.addEventListener('DOMContentLoaded', function() {
-        var waitForPlotly = setInterval(function() {
-            var plots = document.getElementsByClassName('plotly-graph-div');
-            if (plots.length > 0 && plots[0].on) {
-                clearInterval(waitForPlotly);
-                plots[0].on('plotly_click', function(data){
-                    if(data.points && data.points[0].customdata) {
-                        var lat = data.points[0].customdata[4];
-                        var lon = data.points[0].customdata[5];
-                        if (lat && lon) {
-                            window.open('https://www.google.com/maps/search/?api=1&query=' + lat + ',' + lon, '_blank');
-                        }
-                    }
-                });
-            }
-        }, 500);
-    });
-    </script>
-    """
-    final_html = html_bytes.replace('</body>', js_inject + '</body>')
-    # Using allow="fullscreen" is important for iframes to grant browser permission
-    components.html(final_html, height=height)
 
 def parse_gtfs_time(time_str):
     if pd.isna(time_str): return np.nan
@@ -615,7 +558,7 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         "<b>Abs Time:</b> %{customdata[3]}<br>"
         "<b>Distance:</b> %{y:.2f} km<br>"
         "<b>Rel Time:</b> %{x:.1f} mins<br>"
-        "<i>(Click point to view on map)</i>"
+        "<i>(Click point to get Google Maps link)</i>" # <-- Updated text
         "<extra></extra>" 
     )
 
@@ -927,7 +870,39 @@ with tab_spaghetti:
         st.warning("⚠️ **Charts Disabled.** Detailed trip visualizations are only available when analyzing a single route.")
     else:
         st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
-        render_plotly_with_gmaps_click(st.session_state.analysis_results['fig_B'], height=900)
+        
+        # Create a placeholder above the chart for the Google Maps link
+        gmaps_link_container = st.empty()
+        
+        # Render the native Streamlit Plotly Chart with click-selection enabled
+        event = st.plotly_chart(
+            st.session_state.analysis_results['fig_B'],
+            use_container_width=True,
+            height=900,
+            config=PLOTLY_CONFIG,
+            on_select="rerun",           # <--- This captures the click natively
+            selection_mode=["points"]
+        )
+        
+        # If a point was clicked, extract the customdata (lat/lon) and show the link
+        if event and event.selection.get("points"):
+            pt = event.selection["points"][0]
+            if "customdata" in pt and len(pt["customdata"]) >= 6:
+                op_date = pt["customdata"][0]
+                t_id = pt["customdata"][2]
+                lat = pt["customdata"][4]
+                lon = pt["customdata"][5]
+                
+                # Display a green banner with a clickable link
+                gmaps_link_container.success(
+                    f"📍 **Selected {op_date} | Trip {t_id}:** "
+                    f"[**Click here to open this location in Google Maps**]"
+                    f"(https://www.google.com/maps/search/?api=1&query={lat},{lon})"
+                )
+            else:
+                gmaps_link_container.info("Click a specific coordinate point on a trip line to get a Google Maps link.")
+        else:
+            gmaps_link_container.caption("👉 Click any data point on the chart to generate a Google Maps link for that exact location.")
 
 with tab_stats:
     if not st.session_state.analysis_results:
