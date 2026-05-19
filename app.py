@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import gpd as gpd
 import geopandas as gpd
 from shapely.geometry import LineString, Point
 from shapely.ops import substring, linemerge
@@ -117,6 +118,8 @@ def get_all_route_directions(_trips, available_routes):
     for r in available_routes:
         dirs = _trips[_trips['route_id'] == r]['trip_headsign'].dropna().unique()
         for d in dirs:
+            if "short" in str(d).lower():
+                continue
             options.append(f"{r} | {d}")
     return options
 
@@ -361,6 +364,10 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
 
     if len(st_filtered) < 2: return None
 
+    # Track corridor minimum and maximum bound values
+    min_dist = st_filtered['shape_dist_traveled'].min()
+    max_dist = st_filtered['shape_dist_traveled'].max()
+
     sample_shape_id = gtfs_route_trips[gtfs_route_trips['trip_id'] == sample_trip]['shape_id'].iloc[0]
     shp_pts         = shapes[shapes['shape_id'] == sample_shape_id].copy().sort_values('shape_pt_sequence')
     line_coords     = list(zip(shp_pts['shape_pt_lon'].astype(float), shp_pts['shape_pt_lat'].astype(float)))
@@ -390,6 +397,9 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
         group = group.loc[:max_dist_idx].copy()
         group['official_dist_km'] = group['official_dist_km'].cummax()
         group = group.drop_duplicates(subset=['official_dist_km'], keep='first')
+
+        # Filter points specifically to the selected corridor range
+        group = group[(group['official_dist_km'] >= min_dist) & (group['official_dist_km'] <= max_dist)].copy()
         if len(group) < 2: continue
 
         interpolated_times = np.interp(st_filtered['shape_dist_traveled'].values, group['official_dist_km'].values, group['op_seconds'].values, left=np.nan, right=np.nan)
@@ -424,11 +434,41 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
             group['prev_speed_kmh'] = np.where(time_diff > 0, (dist_diff / time_diff) * 3600, 0).clip(min=0)
             group['relative_min'] = (group['op_seconds'] - anchor_sec) / 60.0
 
-            abs_time_series = (pd.to_datetime(group['system_time'], unit='s', utc=True).dt.tz_convert('America/Toronto').dt.strftime('%I:%M:%S %p').tolist())
+            # Trace sequence and inject None element where sequential pings break tracking bounds
+            raw_x = group['relative_min'].tolist()
+            raw_y = group['official_dist_km'].tolist()
+            raw_lat = group['latitude'].tolist()
+            raw_lon = group['longitude'].tolist()
+            raw_speed = group['prev_speed_kmh'].tolist()
+            raw_systime = group['system_time'].tolist()
+
+            raw_abs = (pd.to_datetime(group['system_time'], unit='s', utc=True)
+                       .dt.tz_convert('America/Toronto')
+                       .dt.strftime('%I:%M:%S %p').tolist())
+
+            x_gaps, y_gaps, abs_gaps, lat_gaps, lon_gaps, speed_gaps = [], [], [], [], [], []
+
+            for i in range(len(raw_x)):
+                if i > 0 and (raw_systime[i] - raw_systime[i-1]) > MAX_ALLOWED_PING_GAP_SEC:
+                    # Injected None breaks the Plotly line visualization when gaps are too large
+                    x_gaps.append(None)
+                    y_gaps.append(None)
+                    abs_gaps.append(None)
+                    lat_gaps.append(None)
+                    lon_gaps.append(None)
+                    speed_gaps.append(None)
+
+                x_gaps.append(raw_x[i])
+                y_gaps.append(raw_y[i])
+                abs_gaps.append(raw_abs[i])
+                lat_gaps.append(raw_lat[i])
+                lon_gaps.append(raw_lon[i])
+                speed_gaps.append(raw_speed[i])
+
             mode_b_lines.append({
                 'name': f"{op_date} | {t_id}", 'op_date': str(op_date), 'start_time': format_seconds_to_time(list(run_interpolations.values())[0]),
-                't_id': str(t_id), 'x': group['relative_min'].tolist(), 'y': group['official_dist_km'].tolist(),
-                'abs_time': abs_time_series, 'lat': group['latitude'].tolist(), 'lon': group['longitude'].tolist(), 'speed': group['prev_speed_kmh'].tolist()
+                't_id': str(t_id), 'x': x_gaps, 'y': y_gaps,
+                'abs_time': abs_gaps, 'lat': lat_gaps, 'lon': lon_gaps, 'speed': speed_gaps
             })
             
     if not mode_b_lines: return None
@@ -795,9 +835,11 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
             selected_route = st.selectbox("Route", available_routes, key="route_selection", on_change=reset_signatures)
             gtfs_route_trips = trips[trips['route_id'] == selected_route].copy()
             headsigns = gtfs_route_trips['trip_headsign'].dropna().unique()
-            selected_dir = st.selectbox("Direction (Headsign)", headsigns if len(headsigns)>0 else ["No Data"], key="dir_selection", on_change=reset_signatures)
+            # Clean single route selection choices by excluding short turns
+            filtered_headsigns = [h for h in headsigns if "short" not in str(h).lower()]
+            selected_dir = st.selectbox("Direction (Headsign)", filtered_headsigns if len(filtered_headsigns)>0 else ["No Data"], key="dir_selection", on_change=reset_signatures)
             
-            if len(headsigns) > 0:
+            if len(filtered_headsigns) > 0:
                 gtfs_route_trips = gtfs_route_trips[gtfs_route_trips['trip_headsign'] == selected_dir]
             
             st.info("ℹ️ **What is a Schedule Signature?** A Schedule Signature groups trips that share the exact same stop sequence and relative scheduled timing. This ensures mathematical integrity by measuring every trip against an identical baseline.")
@@ -875,13 +917,13 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
         st.radio("Time Application Mode", ["Overlap Mode", "Trip Start Mode"], key="time_mode", on_change=reset_signatures, help="Overlap: Triggers if ANY part of the trip touches your Time Window. Trip Start: Only triggers if the trip explicitly originates within your Time Window.")
         
         f_disabled = False
-        if not adv_mode and len(headsigns) > 0 and st.session_state.signatures_loaded and st.session_state.signature_list:
+        if not adv_mode and len(filtered_headsigns) > 0 and st.session_state.signatures_loaded and st.session_state.signature_list:
             if 'start_stop_idx' in locals() and start_stop_idx > 0:
                 f_disabled = True
                 
         st.checkbox("Align to First Observed Stop (Override GTFS Start)", key="force_t0", disabled=f_disabled, help="Calculates relative delays by anchoring t=0 at the first physical GPS ping at the origin stop, instead of the official GTFS scheduled departure. Disabled if Start Stop is not the true route origin.")
         
-        if not adv_mode and len(headsigns) > 0 and st.session_state.signatures_loaded and st.session_state.signature_list:
+        if not adv_mode and len(filtered_headsigns) > 0 and st.session_state.signatures_loaded and st.session_state.signature_list:
             available_tids = st.session_state.signature_list[selected_sig_idx]['t_ids']
             st.multiselect("Isolate Specific Trip IDs", options=available_tids, key="isolated_trips", help="Explicitly filter the analysis to only process these scheduled trips.")
 
