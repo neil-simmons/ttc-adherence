@@ -1040,7 +1040,7 @@ with tab_map:
     if not st.session_state.analysis_results:
         precomputed = load_precomputed_network()
         if precomputed:
-            st.info("🗺️ **Showing Default Network View.** All-Day Weekdays, All Routes. Click the **⚙️ Open Filter & Analysis Settings** button above to run a custom analysis.")
+            st.info("🗺️ **Showing Default Network Reliability View.** All-Day Weekdays, All Routes. Click the **⚙️ Open Filter & Analysis Settings** button above to run a custom analysis.")
             stops_df = pd.DataFrame(precomputed['stops'])
             segments_df = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
             
