@@ -266,8 +266,8 @@ def generate_kepler_config():
                         "config": {
                             "dataId": "stops", "label": "Stops", "columns": {"lat": "stop_lat", "lng": "stop_lon"}, "isVisible": True,
                             "visConfig": {
-                                "fixedRadius": True, # Scales stops in real-world meters instead of screen pixels
-                                "radiusRange": [15.0, 50.0], # Fades stops out entirely when zoomed out, reveals them when zoomed in
+                                "radius": 20, # Uniform 20 meters (approx size of a streetcar platform)
+                                "fixedRadius": True,
                                 "opacity": 0.95, 
                                 "filled": True, 
                                 "outline": True, 
@@ -276,7 +276,7 @@ def generate_kepler_config():
                                 "colorRange": color_scale_config
                             }
                         },
-                        "visualChannels": {"colorField": {"name": "reliability", "type": "real"}, "colorScale": "quantize", "sizeField": {"name": "sample_size", "type": "integer"}, "sizeScale": "linear"}
+                        "visualChannels": {"colorField": {"name": "reliability", "type": "real"}, "colorScale": "quantize"}
                     },
                     {
                         "id": "segments", "type": "geojson",
@@ -328,8 +328,8 @@ def generate_equity_kepler_config():
                         "config": {
                             "dataId": "stops", "label": "Stops", "columns": {"lat": "stop_lat", "lng": "stop_lon"}, "isVisible": True,
                             "visConfig": {
-                                "fixedRadius": True, # Scales stops in real-world meters instead of screen pixels
-                                "radiusRange": [15.0, 50.0], # Fades stops out entirely when zoomed out, reveals them when zoomed in
+                                "radius": 20, # Uniform 20 meters (approx size of a streetcar platform)
+                                "fixedRadius": True,
                                 "opacity": 0.95, 
                                 "filled": True, 
                                 "outline": True, 
@@ -338,14 +338,14 @@ def generate_equity_kepler_config():
                                 "colorRange": color_scale_config
                             }
                         },
-                        "visualChannels": {"colorField": {"name": "reliability", "type": "real"}, "colorScale": "quantize", "sizeField": {"name": "sample_size", "type": "integer"}, "sizeScale": "linear"}
+                        "visualChannels": {"colorField": {"name": "reliability", "type": "real"}, "colorScale": "quantize"}
                     },
                     {
                         "id": "segments", "type": "geojson",
                         "config": {
                             "dataId": "segments", "label": "Route Segments", "columns": {"geojson": "geometry"}, "isVisible": True,
                             "visConfig": {
-                                "opacity": 0.9, # Bolder, non-translucent lines for high contrast on the Equity Map view
+                                "opacity": 0.9, 
                                 "strokeOpacity": 0.9, 
                                 "thickness": 1.4, 
                                 "strokeColor": None, 
