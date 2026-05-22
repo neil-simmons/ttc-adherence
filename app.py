@@ -1340,7 +1340,7 @@ def generate_gtfs_stop_times_content(recal_df, raw_pipeline_data):
         
     return "\n".join(lines)
 
-def render_recalibration_section():
+def render_recalibration_section(tab_id):
     if st.session_state.analysis_results is None:
         return
     if st.session_state.analysis_results.get('is_multi', False):
@@ -1362,7 +1362,7 @@ The **target percentile** controls how conservative the new schedule is:
     target_pct = st.slider(
         "Target Percentile",
         min_value=50, max_value=95, value=85, step=5,
-        key="recal_percentile_slider",
+        key=f"recal_percentile_slider_{tab_id}",
         help="Higher = more trips appear on-time, but scheduled journey times increase."
     )
 
@@ -1398,6 +1398,7 @@ The **target percentile** controls how conservative the new schedule is:
         data=gtfs_content,
         file_name="suggested_stop_times.txt",
         mime="text/plain",
+        key=f"recal_dl_btn_{tab_id}",
         help="GTFS-format stop_times.txt with suggested adjusted schedule. Not a complete GTFS feed — reference only."
     )
 
@@ -1555,7 +1556,7 @@ with tab_spaghetti:
         else:
             gmaps_link_container.caption("👉 Click any data point on the chart to generate a Google Maps link for that exact location.")
             
-        render_recalibration_section()
+        render_recalibration_section(spaghetti)
 
 with tab_stats:
     if not st.session_state.analysis_results:
@@ -1566,7 +1567,7 @@ with tab_stats:
         st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
         st.plotly_chart(st.session_state.analysis_results['fig_A'], use_container_width=True, height=900, config=PLOTLY_CONFIG)
         
-        render_recalibration_section()
+        render_recalibration_section(stats)
 
 st.markdown("---")
 st.caption("**Data Privacy Statement:** All data is open public data sourced from the City of Toronto Open Data Portal. © 2026 Neil Simmons. All rights reserved.")
