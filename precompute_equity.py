@@ -33,6 +33,7 @@ def install_missing_dependencies():
 install_missing_dependencies()
 
 import pandas as pd
+import gpd = None # Avoid early bindings before imports are fully ready
 import geopandas as gpd
 import numpy as np
 import re
@@ -65,11 +66,9 @@ def main():
     boundaries['join_key'] = boundaries['AREA_NAME'].str.extract(r'^(.*?)\s*\(\d+\)$')[0].str.strip()
 
     print("Step 2: Loading Census profiles spreadsheet...")
-    # Read the first sheet of the XLSX file
     df = pd.read_excel(EQUITY_PROFILES_FILE, sheet_name=0, header=0)
 
     # Detect variable columns and neighborhood columns
-    # Finding "Characteristic" or falling back to the 5th column index
     char_col = "Characteristic" if "Characteristic" in df.columns else df.columns[4]
     char_idx = df.columns.get_loc(char_col)
     nbh_cols = list(df.columns[char_idx + 1:])
@@ -78,12 +77,11 @@ def main():
 
     def extract_var(keyword):
         """Helper to find matching census variable row and clean the neighborhood values."""
-        row_mask = df[char_col].str.contains(keyword, case_insensitive=True, na=False)
+        row_mask = df[char_col].str.contains(keyword, case=False, na=False)
         if not row_mask.any():
             print(f"Warning: No match found for variable containing '{keyword}'")
             return pd.Series(np.nan, index=nbh_cols)
         
-        # Take the first matched row
         matched_row = df[row_mask].iloc[0]
         extracted = matched_row[nbh_cols].copy()
 
@@ -93,7 +91,6 @@ def main():
             if isinstance(val, (int, float)):
                 return float(val)
             
-            # Clean string structures
             cleaned_str = str(val).replace(",", "").strip()
             if cleaned_str in ("x", "-", "..", "", "null", "None"):
                 return np.nan
@@ -112,7 +109,6 @@ def main():
     if s_lowincome.isna().all():
         s_lowincome = extract_var("LIM-AT")
 
-    # Variable extraction and denominator calculation for percentages
     s_total_pop = extract_var("Population, 2021")
     s_total_hh = extract_var("Total - Private households")
     s_total_commuters = extract_var("Total - Main mode of commuting")
