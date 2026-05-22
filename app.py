@@ -1556,7 +1556,7 @@ with tab_spaghetti:
         else:
             gmaps_link_container.caption("👉 Click any data point on the chart to generate a Google Maps link for that exact location.")
             
-        render_recalibration_section(spaghetti)
+        render_recalibration_section("spaghetti")
 
 with tab_stats:
     if not st.session_state.analysis_results:
@@ -1567,7 +1567,7 @@ with tab_stats:
         st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
         st.plotly_chart(st.session_state.analysis_results['fig_A'], use_container_width=True, height=900, config=PLOTLY_CONFIG)
         
-        render_recalibration_section(stats)
+        render_recalibration_section("stats")
 
 st.markdown("---")
 st.caption("**Data Privacy Statement:** All data is open public data sourced from the City of Toronto Open Data Portal. © 2026 Neil Simmons. All rights reserved.")
