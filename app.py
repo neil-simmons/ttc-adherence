@@ -265,7 +265,15 @@ def generate_kepler_config():
                         "id": "stops", "type": "point",
                         "config": {
                             "dataId": "stops", "label": "Stops", "columns": {"lat": "stop_lat", "lng": "stop_lon"}, "isVisible": True,
-                            "visConfig": {"radiusRange": [3, 9], "opacity": 1.0, "filled": True, "outline": True, "thickness": 1.5, "strokeColor": [255, 255, 255], "colorRange": color_scale_config}
+                            "visConfig": {
+                                "radiusRange": [2.5, 7.5], 
+                                "opacity": 0.85, 
+                                "filled": True, 
+                                "outline": True, 
+                                "thickness": 1.0, 
+                                "strokeColor": [15, 15, 15], 
+                                "colorRange": color_scale_config
+                            }
                         },
                         "visualChannels": {"colorField": {"name": "reliability", "type": "real"}, "colorScale": "quantize", "sizeField": {"name": "sample_size", "type": "integer"}, "sizeScale": "linear"}
                     },
@@ -278,7 +286,7 @@ def generate_kepler_config():
                         "visualChannels": {"colorField": {"name": "avg_reliability", "type": "real"}, "colorScale": "quantize", "strokeColorField": {"name": "avg_reliability", "type": "real"}, "strokeColorScale": "quantize"}
                     }
                 ],
-                "layerOrder": ["stops", "segments"],  # Stops render on top of segments
+                "layerOrder": ["stops", "segments"],
                 "interactionConfig": {
                     "tooltip": {
                         "fieldsToShow": {
@@ -311,7 +319,15 @@ def generate_equity_kepler_config():
                         "id": "stops", "type": "point",
                         "config": {
                             "dataId": "stops", "label": "Stops", "columns": {"lat": "stop_lat", "lng": "stop_lon"}, "isVisible": True,
-                            "visConfig": {"radiusRange": [3, 9], "opacity": 1.0, "filled": True, "outline": True, "thickness": 1.5, "strokeColor": [255, 255, 255], "colorRange": color_scale_config}
+                            "visConfig": {
+                                "radiusRange": [2.5, 7.5], 
+                                "opacity": 0.85, 
+                                "filled": True, 
+                                "outline": True, 
+                                "thickness": 1.0, 
+                                "strokeColor": [15, 15, 15], 
+                                "colorRange": color_scale_config
+                            }
                         },
                         "visualChannels": {"colorField": {"name": "reliability", "type": "real"}, "colorScale": "quantize", "sizeField": {"name": "sample_size", "type": "integer"}, "sizeScale": "linear"}
                     },
@@ -636,7 +652,16 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
             start_d, end_d = min(d1, d2), max(d1, d2)
             if end_d > start_d: geom = substring(full_route_line, start_d, end_d)
         if geom is None or geom.is_empty: geom = LineString([(float(s1.stop_lon), float(s1.stop_lat)), (float(s2.stop_lon), float(s2.stop_lat))])
-        segments.append({'route_id': route_id, 'segment': f"{s1.stop_name} to {s2.stop_name}", 'avg_reliability': (reliability_vals[s1.stop_id] + reliability_vals[s2.stop_id]) / 2.0, 'geometry': geom})
+        
+        # Calculate base segment sample size from boundary stop samples
+        seg_samples = (sample_sizes[s1.stop_id] + sample_sizes[s2.stop_id]) / 2.0
+        segments.append({
+            'route_id': route_id, 
+            'segment': f"{s1.stop_name} to {s2.stop_name}", 
+            'avg_reliability': (reliability_vals[s1.stop_id] + reliability_vals[s2.stop_id]) / 2.0, 
+            'sample_size': seg_samples,
+            'geometry': geom
+        })
         
     segments_df = gpd.GeoDataFrame(segments, geometry='geometry', crs=LATLON_PROJ) if segments else gpd.GeoDataFrame()
     return stops_df, segments_df, reliability_dict, reliability_vals
@@ -860,13 +885,38 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
             
         master_stops = pd.concat(all_stops, ignore_index=True)
         master_stops['rel_weighted'] = master_stops['reliability'] * master_stops['sample_size']
-        master_stops = master_stops.groupby(['route_id', 'stop_id', 'stop_name', 'stop_lat', 'stop_lon'], as_index=False, observed=True).agg({'rel_weighted': 'sum', 'sample_size': 'sum'})
+        
+        # Ensure route_id is handled as a string for clean list concatenation
+        master_stops['route_id'] = master_stops['route_id'].astype(str)
+        
+        # Group strictly by physical stop metadata to eliminate overlapping concentric rings
+        master_stops = master_stops.groupby(['stop_id', 'stop_name', 'stop_lat', 'stop_lon'], as_index=False, observed=True).agg({
+            'route_id': lambda x: ", ".join(sorted(list(set(x)))),  # Merges route labels: "501, 504"
+            'rel_weighted': 'sum',
+            'sample_size': 'sum'
+        })
+        
+        # Compute the statistically rigorous weighted Micro-Average across pooled transit runs
         master_stops['reliability'] = np.where(master_stops['sample_size'] > 0, master_stops['rel_weighted'] / master_stops['sample_size'], 0)
         master_stops.drop(columns=['rel_weighted'], inplace=True)
 
         if all_segments:
             master_segments = pd.concat(all_segments, ignore_index=True)
-            master_segments = master_segments.groupby(['route_id', 'segment'], as_index=False).agg({'avg_reliability': 'mean', 'geometry': 'first'})
+            # Create weighted metric using boundary-based sample size
+            master_segments['seg_rel_weighted'] = master_segments['avg_reliability'] * master_segments['sample_size']
+            
+            # Aggregate parallel segments using weighted micro-average weights
+            master_segments = master_segments.groupby(['route_id', 'segment'], as_index=False).agg({
+                'seg_rel_weighted': 'sum',
+                'sample_size': 'sum',
+                'geometry': 'first'
+            })
+            master_segments['avg_reliability'] = np.where(
+                master_segments['sample_size'] > 0, 
+                master_segments['seg_rel_weighted'] / master_segments['sample_size'], 
+                0
+            )
+            master_segments.drop(columns=['seg_rel_weighted'], inplace=True)
             master_segments = gpd.GeoDataFrame(master_segments, geometry='geometry', crs=LATLON_PROJ)
         else:
             master_segments = gpd.GeoDataFrame()
