@@ -402,6 +402,24 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
         if len(group) < 2: continue
 
         interpolated_times = np.interp(st_filtered['shape_dist_traveled'].values, group['official_dist_km'].values, group['op_seconds'].values, left=np.nan, right=np.nan)
+        
+        # --- NEW CODE: Gap-Aware Interpolation Filter ---
+        # If a vehicle detours or loses GPS, discard interpolated times for stops inside the gap
+        grp_dists = group['official_dist_km'].values
+        grp_times = group['system_time'].values  
+        
+        for j in range(len(grp_dists) - 1):
+            # Use the existing visualization constant to ensure stats and charts match exactly
+            if (grp_times[j+1] - grp_times[j]) > MAX_ALLOWED_PING_GAP_SEC:
+                # Find stops that fall physically between these two distant GPS pings
+                stops_in_gap = (
+                    (st_filtered['shape_dist_traveled'] > grp_dists[j]) & 
+                    (st_filtered['shape_dist_traveled'] < grp_dists[j+1])
+                )
+                # Nullify so they are excluded from the run_interpolations dictionary below
+                interpolated_times[stops_in_gap] = np.nan
+        # ------------------------------------------------
+
         run_interpolations = {sid: t for sid, t in zip(st_filtered['stop_id'], interpolated_times) if not np.isnan(t)}
         if not run_interpolations: continue
 
