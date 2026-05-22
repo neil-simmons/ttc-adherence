@@ -266,7 +266,8 @@ def generate_kepler_config():
                         "config": {
                             "dataId": "stops", "label": "Stops", "columns": {"lat": "stop_lat", "lng": "stop_lon"}, "isVisible": True,
                             "visConfig": {
-                                "radiusRange": [3.5, 10.0], 
+                                "fixedRadius": True, # Scales stops in real-world meters instead of screen pixels
+                                "radiusRange": [15.0, 50.0], # Fades stops out entirely when zoomed out, reveals them when zoomed in
                                 "opacity": 0.95, 
                                 "filled": True, 
                                 "outline": True, 
@@ -327,12 +328,13 @@ def generate_equity_kepler_config():
                         "config": {
                             "dataId": "stops", "label": "Stops", "columns": {"lat": "stop_lat", "lng": "stop_lon"}, "isVisible": True,
                             "visConfig": {
-                                "radiusRange": [3.5, 10.0], 
+                                "fixedRadius": True, # Scales stops in real-world meters instead of screen pixels
+                                "radiusRange": [15.0, 50.0], # Fades stops out entirely when zoomed out, reveals them when zoomed in
                                 "opacity": 0.95, 
                                 "filled": True, 
                                 "outline": True, 
-                                "thickness": 1.0, 
-                                "strokeColor": [220, 220, 220], 
+                                "thickness": 1.5, 
+                                "strokeColor": [15, 15, 15], 
                                 "colorRange": color_scale_config
                             }
                         },
@@ -343,9 +345,9 @@ def generate_equity_kepler_config():
                         "config": {
                             "dataId": "segments", "label": "Route Segments", "columns": {"geojson": "geometry"}, "isVisible": True,
                             "visConfig": {
-                                "opacity": 0.5, 
-                                "strokeOpacity": 0.5, 
-                                "thickness": 0.6, 
+                                "opacity": 0.9, # Bolder, non-translucent lines for high contrast on the Equity Map view
+                                "strokeOpacity": 0.9, 
+                                "thickness": 1.4, 
                                 "strokeColor": None, 
                                 "colorRange": color_scale_config, 
                                 "strokeColorRange": color_scale_config
@@ -357,7 +359,7 @@ def generate_equity_kepler_config():
                         "id": "eq_income", "type": "geojson",
                         "config": {
                             "dataId": "equity", "label": "Median Household Income ($)", "columns": {"geojson": "geometry"}, "isVisible": True,
-                            "visConfig": {"opacity": 0.55, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "Income_Blues", "type": "custom", "category": "Custom", "colors": ["#eff3ff","#c6dbef","#9ecae1","#6baed6","#3182bd","#08519c"]}}
+                            "visConfig": {"opacity": 0.22, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "Income_Blues", "type": "custom", "category": "Custom", "colors": ["#eff3ff","#c6dbef","#9ecae1","#6baed6","#3182bd","#08519c"]}}
                         },
                         "visualChannels": {"colorField": {"name": "median_income", "type": "real"}, "colorScale": "quantile"}
                     },
@@ -365,7 +367,7 @@ def generate_equity_kepler_config():
                         "id": "eq_lowincome", "type": "geojson",
                         "config": {
                             "dataId": "equity", "label": "Low-Income Households (%)", "columns": {"geojson": "geometry"}, "isVisible": False,
-                            "visConfig": {"opacity": 0.55, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "LowIncome_Purples", "type": "custom", "category": "Custom", "colors": ["#f2f0f7","#dadaeb","#bcbddc","#9e9ac8","#756bb1","#54278f"]}}
+                            "visConfig": {"opacity": 0.22, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "LowIncome_Purples", "type": "custom", "category": "Custom", "colors": ["#f2f0f7","#dadaeb","#bcbddc","#9e9ac8","#756bb1","#54278f"]}}
                         },
                         "visualChannels": {"colorField": {"name": "low_income_pct", "type": "real"}, "colorScale": "quantile"}
                     },
@@ -373,7 +375,7 @@ def generate_equity_kepler_config():
                         "id": "eq_transit", "type": "geojson",
                         "config": {
                             "dataId": "equity", "label": "Transit Commuters (%) — Transit Dependence", "columns": {"geojson": "geometry"}, "isVisible": False,
-                            "visConfig": {"opacity": 0.55, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "Transit_Pinks", "type": "custom", "category": "Custom", "colors": ["#fde0dd","#fcc5c0","#fa9fb5","#f768a1","#c51b8a","#7a0177"]}}
+                            "visConfig": {"opacity": 0.22, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "Transit_Pinks", "type": "custom", "category": "Custom", "colors": ["#fde0dd","#fcc5c0","#fa9fb5","#f768a1","#c51b8a","#7a0177"]}}
                         },
                         "visualChannels": {"colorField": {"name": "transit_commute_pct", "type": "real"}, "colorScale": "quantile"}
                     },
@@ -381,7 +383,7 @@ def generate_equity_kepler_config():
                         "id": "eq_vismin", "type": "geojson",
                         "config": {
                             "dataId": "equity", "label": "Visible Minority Population (%)", "columns": {"geojson": "geometry"}, "isVisible": False,
-                            "visConfig": {"opacity": 0.55, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "VisMin_Greys", "type": "custom", "category": "Custom", "colors": ["#f7f7f7","#d9d9d9","#bdbdbd","#969696","#636363","#252525"]}}
+                            "visConfig": {"opacity": 0.22, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "VisMin_Greys", "type": "custom", "category": "Custom", "colors": ["#f7f7f7","#d9d9d9","#bdbdbd","#969696","#636363","#252525"]}}
                         },
                         "visualChannels": {"colorField": {"name": "visible_minority_pct", "type": "real"}, "colorScale": "quantile"}
                     },
@@ -389,7 +391,7 @@ def generate_equity_kepler_config():
                         "id": "eq_immigrant", "type": "geojson",
                         "config": {
                             "dataId": "equity", "label": "Recent Immigrants — Last 5 Years (%)", "columns": {"geojson": "geometry"}, "isVisible": False,
-                            "visConfig": {"opacity": 0.55, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "Immigrant_Indigo", "type": "custom", "category": "Custom", "colors": ["#bfd3e6","#9ebcda","#8c96c6","#8c6bb1","#88419d","#810f7c"]}}
+                            "visConfig": {"opacity": 0.22, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "Immigrant_Indigo", "type": "custom", "category": "Custom", "colors": ["#bfd3e6","#9ebcda","#8c96c6","#8c6bb1","#88419d","#810f7c"]}}
                         },
                         "visualChannels": {"colorField": {"name": "recent_immigrant_pct", "type": "real"}, "colorScale": "quantile"}
                     },
@@ -397,7 +399,7 @@ def generate_equity_kepler_config():
                         "id": "eq_seniors", "type": "geojson",
                         "config": {
                             "dataId": "equity", "label": "Seniors 65+ (%)", "columns": {"geojson": "geometry"}, "isVisible": False,
-                            "visConfig": {"opacity": 0.55, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "Senior_Browns", "type": "custom", "category": "Custom", "colors": ["#f6e8c3","#dfc27d","#bf812d","#8c510a","#543005","#331A00"]}}
+                            "visConfig": {"opacity": 0.22, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "Senior_Browns", "type": "custom", "category": "Custom", "colors": ["#f6e8c3","#dfc27d","#bf812d","#8c510a","#543005","#331A00"]}}
                         },
                         "visualChannels": {"colorField": {"name": "senior_pct", "type": "real"}, "colorScale": "quantile"}
                     }
