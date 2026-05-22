@@ -266,12 +266,12 @@ def generate_kepler_config():
                         "config": {
                             "dataId": "stops", "label": "Stops", "columns": {"lat": "stop_lat", "lng": "stop_lon"}, "isVisible": True,
                             "visConfig": {
-                                "radiusRange": [2.5, 7.5], 
-                                "opacity": 0.85, 
+                                "radiusRange": [3.5, 10.0], 
+                                "opacity": 0.95, 
                                 "filled": True, 
                                 "outline": True, 
                                 "thickness": 1.0, 
-                                "strokeColor": [15, 15, 15], 
+                                "strokeColor": [220, 220, 220], 
                                 "colorRange": color_scale_config
                             }
                         },
@@ -281,7 +281,14 @@ def generate_kepler_config():
                         "id": "segments", "type": "geojson",
                         "config": {
                             "dataId": "segments", "label": "Route Segments", "columns": {"geojson": "geometry"}, "isVisible": True,
-                            "visConfig": {"opacity": 1.0, "strokeOpacity": 1.0, "thickness": 1.0, "strokeColor": None, "colorRange": color_scale_config, "strokeColorRange": color_scale_config}
+                            "visConfig": {
+                                "opacity": 0.5, 
+                                "strokeOpacity": 0.5, 
+                                "thickness": 0.6, 
+                                "strokeColor": None, 
+                                "colorRange": color_scale_config, 
+                                "strokeColorRange": color_scale_config
+                            }
                         },
                         "visualChannels": {"colorField": {"name": "avg_reliability", "type": "real"}, "colorScale": "quantize", "strokeColorField": {"name": "avg_reliability", "type": "real"}, "strokeColorScale": "quantize"}
                     }
@@ -320,12 +327,12 @@ def generate_equity_kepler_config():
                         "config": {
                             "dataId": "stops", "label": "Stops", "columns": {"lat": "stop_lat", "lng": "stop_lon"}, "isVisible": True,
                             "visConfig": {
-                                "radiusRange": [2.5, 7.5], 
-                                "opacity": 0.85, 
+                                "radiusRange": [3.5, 10.0], 
+                                "opacity": 0.95, 
                                 "filled": True, 
                                 "outline": True, 
                                 "thickness": 1.0, 
-                                "strokeColor": [15, 15, 15], 
+                                "strokeColor": [220, 220, 220], 
                                 "colorRange": color_scale_config
                             }
                         },
@@ -335,7 +342,14 @@ def generate_equity_kepler_config():
                         "id": "segments", "type": "geojson",
                         "config": {
                             "dataId": "segments", "label": "Route Segments", "columns": {"geojson": "geometry"}, "isVisible": True,
-                            "visConfig": {"opacity": 1.0, "strokeOpacity": 1.0, "thickness": 1.0, "strokeColor": None, "colorRange": color_scale_config, "strokeColorRange": color_scale_config}
+                            "visConfig": {
+                                "opacity": 0.5, 
+                                "strokeOpacity": 0.5, 
+                                "thickness": 0.6, 
+                                "strokeColor": None, 
+                                "colorRange": color_scale_config, 
+                                "strokeColorRange": color_scale_config
+                            }
                         },
                         "visualChannels": {"colorField": {"name": "avg_reliability", "type": "real"}, "colorScale": "quantize", "strokeColorField": {"name": "avg_reliability", "type": "real"}, "strokeColorScale": "quantize"}
                     },
@@ -411,7 +425,6 @@ def generate_equity_kepler_config():
             "mapStyle": {"styleType": "muted_night"}
         }
     }
-
 
 # ==============================================================================
 # 4. MODULARIZED PIPELINE FUNCTIONS
