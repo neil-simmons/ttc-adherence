@@ -32,11 +32,10 @@ def install_missing_dependencies():
 
 install_missing_dependencies()
 
+# Safe imports after installation check
 import pandas as pd
-import gpd = None # Avoid early bindings before imports are fully ready
 import geopandas as gpd
 import numpy as np
-import re
 from shapely.geometry import shape
 
 # ==============================================================================
@@ -77,7 +76,8 @@ def main():
 
     def extract_var(keyword):
         """Helper to find matching census variable row and clean the neighborhood values."""
-        row_mask = df[char_col].str.contains(keyword, case=False, na=False)
+        # Force string conversion on characteristic column to ensure robust regex matching
+        row_mask = df[char_col].astype(str).str.contains(keyword, case=False, na=False)
         if not row_mask.any():
             print(f"Warning: No match found for variable containing '{keyword}'")
             return pd.Series(np.nan, index=nbh_cols)
