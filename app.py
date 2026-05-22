@@ -50,6 +50,7 @@ GTFS_TRIPS      = "trips.txt"
 GTFS_STOP_TIMES = "stop_times.txt"
 GTFS_SHAPES     = "shapes.txt"
 PRECOMPUTED_MAP = "precomputed_network.json"
+EQUITY_NBH_FILE = "equity_neighbourhoods.geojson"
 
 START_DATE    = '2026-03-15'
 END_DATE      = '2026-05-02 23:59:59'
@@ -99,6 +100,11 @@ def get_stop_times_path(): return _hf(GTFS_STOP_TIMES)
 
 @st.cache_resource(show_spinner="Downloading GTFS shapes...")
 def get_shapes_path(): return _hf(GTFS_SHAPES)
+
+@st.cache_resource(show_spinner="Loading neighbourhood equity data...")
+def load_equity_data():
+    path = _hf(EQUITY_NBH_FILE)
+    return gpd.read_file(path)
 
 @st.cache_data(show_spinner="Indexing available routes...")
 def get_available_routes(path):
@@ -287,6 +293,128 @@ def generate_kepler_config():
         }
     }
 
+def generate_equity_kepler_config():
+    custom_20_colors = [
+        "#DA251D", "#E03920", "#E54E23", "#EB6326", "#F07729", 
+        "#F58C2C", "#FBA02F", "#FFB532", "#FFCA35", "#FFDE38", 
+        "#F2E43B", "#D8DB3D", "#BED240", "#A3C942", "#89C045", 
+        "#6FB747", "#54AE4A", "#3AA54C", "#209C4F", "#1A9641"
+    ]
+    color_scale_config = {"name": "TTC_Scale", "type": "custom", "category": "Custom", "colors": custom_20_colors}
+    
+    return {
+        "version": "v1",
+        "config": {
+            "visState": {
+                "layers": [
+                    {
+                        "id": "eq_income", "type": "geojson",
+                        "config": {
+                            "dataId": "equity", "label": "Median Household Income ($)", "columns": {"geojson": "geometry"}, "isVisible": True,
+                            "visConfig": {"opacity": 0.55, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "Income_Blues", "type": "custom", "category": "Custom", "colors": ["#eff3ff","#c6dbef","#9ecae1","#6baed6","#3182bd","#08519c"]}}
+                        },
+                        "visualChannels": {"colorField": {"name": "median_income", "type": "real"}, "colorScale": "quantize"}
+                    },
+                    {
+                        "id": "eq_lowincome", "type": "geojson",
+                        "config": {
+                            "dataId": "equity", "label": "Low-Income Households (%)", "columns": {"geojson": "geometry"}, "isVisible": False,
+                            "visConfig": {"opacity": 0.55, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "LowIncome_Reds", "type": "custom", "category": "Custom", "colors": ["#fee5d9","#fcbba1","#fc9272","#fb6a4a","#de2d26","#a50f15"]}}
+                        },
+                        "visualChannels": {"colorField": {"name": "low_income_pct", "type": "real"}, "colorScale": "quantize"}
+                    },
+                    {
+                        "id": "eq_zerocar", "type": "geojson",
+                        "config": {
+                            "dataId": "equity", "label": "Zero-Car Households (%) — Transit Captivity", "columns": {"geojson": "geometry"}, "isVisible": False,
+                            "visConfig": {"opacity": 0.55, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "ZeroCar_Purples", "type": "custom", "category": "Custom", "colors": ["#f2f0f7","#dadaeb","#bcbddc","#9e9ac8","#756bb1","#54278f"]}}
+                        },
+                        "visualChannels": {"colorField": {"name": "zero_car_pct", "type": "real"}, "colorScale": "quantize"}
+                    },
+                    {
+                        "id": "eq_transit", "type": "geojson",
+                        "config": {
+                            "dataId": "equity", "label": "Transit Commuters (%) — Transit Dependence", "columns": {"geojson": "geometry"}, "isVisible": False,
+                            "visConfig": {"opacity": 0.55, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "Transit_Greens", "type": "custom", "category": "Custom", "colors": ["#edf8e9","#c7e9c0","#a1d99b","#74c476","#31a354","#006d2c"]}}
+                        },
+                        "visualChannels": {"colorField": {"name": "transit_commute_pct", "type": "real"}, "colorScale": "quantize"}
+                    },
+                    {
+                        "id": "eq_vismin", "type": "geojson",
+                        "config": {
+                            "dataId": "equity", "label": "Visible Minority Population (%)", "columns": {"geojson": "geometry"}, "isVisible": False,
+                            "visConfig": {"opacity": 0.55, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "VisMin_Oranges", "type": "custom", "category": "Custom", "colors": ["#feedde","#fdd0a2","#fdae6b","#fd8d3c","#e6550d","#a63603"]}}
+                        },
+                        "visualChannels": {"colorField": {"name": "visible_minority_pct", "type": "real"}, "colorScale": "quantize"}
+                    },
+                    {
+                        "id": "eq_immigrant", "type": "geojson",
+                        "config": {
+                            "dataId": "equity", "label": "Recent Immigrants — Last 5 Years (%)", "columns": {"geojson": "geometry"}, "isVisible": False,
+                            "visConfig": {"opacity": 0.55, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "Immigrant_Teals", "type": "custom", "category": "Custom", "colors": ["#f0f9fb","#d0ecf1","#a8d5e2","#6ab4cc","#3182bd","#084081"]}}
+                        },
+                        "visualChannels": {"colorField": {"name": "recent_immigrant_pct", "type": "real"}, "colorScale": "quantize"}
+                    },
+                    {
+                        "id": "eq_seniors", "type": "geojson",
+                        "config": {
+                            "dataId": "equity", "label": "Seniors 65+ (%)", "columns": {"geojson": "geometry"}, "isVisible": False,
+                            "visConfig": {"opacity": 0.55, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "Senior_Ambers", "type": "custom", "category": "Custom", "colors": ["#ffffd4","#fee391","#fec44f","#fe9929","#d95f0e","#993404"]}}
+                        },
+                        "visualChannels": {"colorField": {"name": "senior_pct", "type": "real"}, "colorScale": "quantize"}
+                    },
+                    {
+                        "id": "eq_nia", "type": "geojson",
+                        "config": {
+                            "dataId": "equity", "label": "Neighbourhood Improvement Areas (City Designation)", "columns": {"geojson": "geometry"}, "isVisible": False,
+                            "visConfig": {"opacity": 0.6, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "NIA_Binary", "type": "custom", "category": "Custom", "colors": ["#d3d3d3","#FF6B35"]}}
+                        },
+                        "visualChannels": {"colorField": {"name": "is_nia", "type": "integer"}, "colorScale": "ordinal"}
+                    },
+                    {
+                        "id": "segments", "type": "geojson",
+                        "config": {
+                            "dataId": "segments", "label": "Route Segments", "columns": {"geojson": "geometry"}, "isVisible": True,
+                            "visConfig": {"opacity": 1.0, "strokeOpacity": 1.0, "thickness": 1.0, "strokeColor": None, "colorRange": color_scale_config, "strokeColorRange": color_scale_config}
+                        },
+                        "visualChannels": {"colorField": {"name": "avg_reliability", "type": "real"}, "colorScale": "quantize", "strokeColorField": {"name": "avg_reliability", "type": "real"}, "strokeColorScale": "quantize"}
+                    },
+                    {
+                        "id": "stops", "type": "point",
+                        "config": {
+                            "dataId": "stops", "label": "Stops", "columns": {"lat": "stop_lat", "lng": "stop_lon"}, "isVisible": True,
+                            "visConfig": {"radiusRange": [3, 9], "opacity": 1.0, "filled": True, "outline": True, "thickness": 1.5, "strokeColor": [255, 255, 255], "colorRange": color_scale_config}
+                        },
+                        "visualChannels": {"colorField": {"name": "reliability", "type": "real"}, "colorScale": "quantize", "sizeField": {"name": "sample_size", "type": "integer"}, "sizeScale": "linear"}
+                    }
+                ],
+                "layerOrder": ["eq_income","eq_lowincome","eq_zerocar","eq_transit","eq_vismin","eq_immigrant","eq_seniors","eq_nia","segments","stops"],
+                "interactionConfig": {
+                    "tooltip": {
+                        "fieldsToShow": {
+                            "equity": [
+                                {"name": "area_name", "format": None},
+                                {"name": "median_income", "format": None},
+                                {"name": "low_income_pct", "format": None},
+                                {"name": "zero_car_pct", "format": None},
+                                {"name": "transit_commute_pct", "format": None},
+                                {"name": "visible_minority_pct", "format": None},
+                                {"name": "recent_immigrant_pct", "format": None},
+                                {"name": "senior_pct", "format": None},
+                                {"name": "is_nia", "format": None}
+                            ],
+                            "segments": [{"name": "segment", "format": None}, {"name": "route_id", "format": None}, {"name": "avg_reliability", "format": ".1f"}],
+                            "stops": [{"name": "stop_name", "format": None}, {"name": "route_id", "format": None}, {"name": "reliability", "format": ".1f"}]
+                        },
+                        "enabled": True
+                    }
+                }
+            },
+            "mapStyle": {"styleType": "muted_night"}
+        }
+    }
+
+
 # ==============================================================================
 # 4. MODULARIZED PIPELINE FUNCTIONS
 # ==============================================================================
@@ -402,24 +530,6 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
         if len(group) < 2: continue
 
         interpolated_times = np.interp(st_filtered['shape_dist_traveled'].values, group['official_dist_km'].values, group['op_seconds'].values, left=np.nan, right=np.nan)
-        
-        # --- NEW CODE: Gap-Aware Interpolation Filter ---
-        # If a vehicle detours or loses GPS, discard interpolated times for stops inside the gap
-        grp_dists = group['official_dist_km'].values
-        grp_times = group['system_time'].values  
-        
-        for j in range(len(grp_dists) - 1):
-            # Use the existing visualization constant to ensure stats and charts match exactly
-            if (grp_times[j+1] - grp_times[j]) > MAX_ALLOWED_PING_GAP_SEC:
-                # Find stops that fall physically between these two distant GPS pings
-                stops_in_gap = (
-                    (st_filtered['shape_dist_traveled'] > grp_dists[j]) & 
-                    (st_filtered['shape_dist_traveled'] < grp_dists[j+1])
-                )
-                # Nullify so they are excluded from the run_interpolations dictionary below
-                interpolated_times[stops_in_gap] = np.nan
-        # ------------------------------------------------
-
         run_interpolations = {sid: t for sid, t in zip(st_filtered['stop_id'], interpolated_times) if not np.isnan(t)}
         if not run_interpolations: continue
 
@@ -1191,6 +1301,63 @@ with tab_map:
             keplergl_static(map_instance, center_map=True)
         else:
             st.warning("Spatial geometry could not be built for this route.")
+
+    st.markdown("---")
+    st.markdown("### 🏘️ Equity Context Map")
+    st.markdown("Neighbourhood-level equity indicators from Statistics Canada 2021 Census and City of Toronto Open Data, overlaid with transit reliability. **Use the layer panel (top-left of the map) to toggle between equity indicators.** Transit segments and stops reflect the current analysis if one has been run, otherwise show the all-routes precomputed network.")
+    
+    with st.expander("📖 Layer Guide", expanded=False):
+        st.markdown("""
+| Layer Name | What It Shows | Why It Matters |
+|---|---|---|
+| Median Household Income ($) | Neighbourhood median household income | Lower-income areas have fewer alternatives to transit |
+| Low-Income Households (%) | Share of residents below low-income measure (after tax) | Directly measures economic vulnerability to service gaps |
+| Zero-Car Households (%) — Transit Captivity | Share of households with no car | Car-free households cannot opt out when transit fails |
+| Transit Commuters (%) — Transit Dependence | Share of employed residents commuting by transit | Shows which communities rely on transit for employment access |
+| Visible Minority Population (%) | Share identifying as visible minority | Racialized communities in Toronto face disproportionate transit impacts |
+| Recent Immigrants — Last 5 Years (%) | Share who immigrated within 5 years | Newcomers are often transit-dependent and less familiar with disruption patterns |
+| Seniors 65+ (%) | Share of population aged 65 or older | Older adults have reduced tolerance for schedule unreliability and longer walks |
+| Neighbourhood Improvement Areas | City of Toronto NIA designation (yes/no) | Official recognition of underserved communities |
+""")
+    
+    equity_gdf = load_equity_data()
+    
+    t_stops = None
+    t_segs = None
+    
+    if st.session_state.analysis_results is not None and not st.session_state.analysis_results.get('is_multi', False):
+        t_stops = st.session_state.analysis_results.get('stops_df')
+        t_segs = st.session_state.analysis_results.get('segments_df')
+    else:
+        precomputed = load_precomputed_network()
+        if precomputed:
+            t_stops = pd.DataFrame(precomputed['stops'])
+            t_segs = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
+            t_stops, t_segs = inject_legend_anchors(t_stops, t_segs)
+            
+    equity_config = generate_equity_kepler_config()
+    data_dict = {"equity": equity_gdf}
+    
+    if t_stops is not None and t_segs is not None and not t_stops.empty and not t_segs.empty:
+        data_dict["stops"] = t_stops
+        data_dict["segments"] = t_segs
+    else:
+        layers = equity_config["config"]["visState"]["layers"]
+        equity_config["config"]["visState"]["layers"] = [l for l in layers if l["id"] not in ("segments", "stops")]
+        
+        layer_order = equity_config["config"]["visState"]["layerOrder"]
+        equity_config["config"]["visState"]["layerOrder"] = [lo for lo in layer_order if lo not in ("segments", "stops")]
+        
+        tooltip_fields = equity_config["config"]["visState"]["interactionConfig"]["tooltip"]["fieldsToShow"]
+        if "segments" in tooltip_fields:
+            del tooltip_fields["segments"]
+        if "stops" in tooltip_fields:
+            del tooltip_fields["stops"]
+            
+    equity_map = KeplerGl(height=650, data=data_dict, config=equity_config)
+    keplergl_static(equity_map, center_map=True)
+    
+    st.caption("Data: Statistics Canada 2021 Census via City of Toronto Neighbourhood Profiles (open.toronto.ca). NIA boundaries from City of Toronto Open Data. All data used under open government licence.")
 
 with tab_spaghetti:
     if not st.session_state.analysis_results:
