@@ -262,23 +262,23 @@ def generate_kepler_config():
             "visState": {
                 "layers": [
                     {
-                        "id": "segments", "type": "geojson",
-                        "config": {
-                            "dataId": "segments", "label": "Route Segments", "columns": {"geojson": "geometry"}, "isVisible": True,
-                            "visConfig": {"opacity": 1.0, "strokeOpacity": 1.0, "thickness": 1.0, "strokeColor": None, "colorRange": color_scale_config, "strokeColorRange": color_scale_config}
-                        },
-                        "visualChannels": {"colorField": {"name": "avg_reliability", "type": "real"}, "colorScale": "quantize", "strokeColorField": {"name": "avg_reliability", "type": "real"}, "strokeColorScale": "quantize"}
-                    },
-                    {
                         "id": "stops", "type": "point",
                         "config": {
                             "dataId": "stops", "label": "Stops", "columns": {"lat": "stop_lat", "lng": "stop_lon"}, "isVisible": True,
                             "visConfig": {"radiusRange": [3, 9], "opacity": 1.0, "filled": True, "outline": True, "thickness": 1.5, "strokeColor": [255, 255, 255], "colorRange": color_scale_config}
                         },
                         "visualChannels": {"colorField": {"name": "reliability", "type": "real"}, "colorScale": "quantize", "sizeField": {"name": "sample_size", "type": "integer"}, "sizeScale": "linear"}
+                    },
+                    {
+                        "id": "segments", "type": "geojson",
+                        "config": {
+                            "dataId": "segments", "label": "Route Segments", "columns": {"geojson": "geometry"}, "isVisible": True,
+                            "visConfig": {"opacity": 1.0, "strokeOpacity": 1.0, "thickness": 1.0, "strokeColor": None, "colorRange": color_scale_config, "strokeColorRange": color_scale_config}
+                        },
+                        "visualChannels": {"colorField": {"name": "avg_reliability", "type": "real"}, "colorScale": "quantize", "strokeColorField": {"name": "avg_reliability", "type": "real"}, "strokeColorScale": "quantize"}
                     }
                 ],
-                "layerOrder": ["segments", "stops"],  # Stops render on top of segments
+                "layerOrder": ["stops", "segments"],  # Stops render on top of segments
                 "interactionConfig": {
                     "tooltip": {
                         "fieldsToShow": {
@@ -308,6 +308,22 @@ def generate_equity_kepler_config():
             "visState": {
                 "layers": [
                     {
+                        "id": "stops", "type": "point",
+                        "config": {
+                            "dataId": "stops", "label": "Stops", "columns": {"lat": "stop_lat", "lng": "stop_lon"}, "isVisible": True,
+                            "visConfig": {"radiusRange": [3, 9], "opacity": 1.0, "filled": True, "outline": True, "thickness": 1.5, "strokeColor": [255, 255, 255], "colorRange": color_scale_config}
+                        },
+                        "visualChannels": {"colorField": {"name": "reliability", "type": "real"}, "colorScale": "quantize", "sizeField": {"name": "sample_size", "type": "integer"}, "sizeScale": "linear"}
+                    },
+                    {
+                        "id": "segments", "type": "geojson",
+                        "config": {
+                            "dataId": "segments", "label": "Route Segments", "columns": {"geojson": "geometry"}, "isVisible": True,
+                            "visConfig": {"opacity": 1.0, "strokeOpacity": 1.0, "thickness": 1.0, "strokeColor": None, "colorRange": color_scale_config, "strokeColorRange": color_scale_config}
+                        },
+                        "visualChannels": {"colorField": {"name": "avg_reliability", "type": "real"}, "colorScale": "quantize", "strokeColorField": {"name": "avg_reliability", "type": "real"}, "strokeColorScale": "quantize"}
+                    },
+                    {
                         "id": "eq_income", "type": "geojson",
                         "config": {
                             "dataId": "equity", "label": "Median Household Income ($)", "columns": {"geojson": "geometry"}, "isVisible": True,
@@ -322,14 +338,6 @@ def generate_equity_kepler_config():
                             "visConfig": {"opacity": 0.55, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "LowIncome_Purples", "type": "custom", "category": "Custom", "colors": ["#f2f0f7","#dadaeb","#bcbddc","#9e9ac8","#756bb1","#54278f"]}}
                         },
                         "visualChannels": {"colorField": {"name": "low_income_pct", "type": "real"}, "colorScale": "quantile"}
-                    },
-                    {
-                        "id": "eq_zerocar", "type": "geojson",
-                        "config": {
-                            "dataId": "equity", "label": "Zero-Car Households (%) — Transit Captivity", "columns": {"geojson": "geometry"}, "isVisible": False,
-                            "visConfig": {"opacity": 0.55, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "ZeroCar_Cyans", "type": "custom", "category": "Custom", "colors": ["#e4f4f8","#c0e6f0","#90d1e6","#55b4d4","#2993b8","#0f6d94"]}}
-                        },
-                        "visualChannels": {"colorField": {"name": "zero_car_pct", "type": "real"}, "colorScale": "quantile"}
                     },
                     {
                         "id": "eq_transit", "type": "geojson",
@@ -362,25 +370,9 @@ def generate_equity_kepler_config():
                             "visConfig": {"opacity": 0.55, "strokeOpacity": 0.25, "thickness": 0.2, "strokeColor": [180, 180, 180], "filled": True, "enable3d": False, "colorRange": {"name": "Senior_Browns", "type": "custom", "category": "Custom", "colors": ["#f6e8c3","#dfc27d","#bf812d","#8c510a","#543005","#331A00"]}}
                         },
                         "visualChannels": {"colorField": {"name": "senior_pct", "type": "real"}, "colorScale": "quantile"}
-                    },
-                    {
-                        "id": "segments", "type": "geojson",
-                        "config": {
-                            "dataId": "segments", "label": "Route Segments", "columns": {"geojson": "geometry"}, "isVisible": True,
-                            "visConfig": {"opacity": 1.0, "strokeOpacity": 1.0, "thickness": 1.0, "strokeColor": None, "colorRange": color_scale_config, "strokeColorRange": color_scale_config}
-                        },
-                        "visualChannels": {"colorField": {"name": "avg_reliability", "type": "real"}, "colorScale": "quantize", "strokeColorField": {"name": "avg_reliability", "type": "real"}, "strokeColorScale": "quantize"}
-                    },
-                    {
-                        "id": "stops", "type": "point",
-                        "config": {
-                            "dataId": "stops", "label": "Stops", "columns": {"lat": "stop_lat", "lng": "stop_lon"}, "isVisible": True,
-                            "visConfig": {"radiusRange": [3, 9], "opacity": 1.0, "filled": True, "outline": True, "thickness": 1.5, "strokeColor": [255, 255, 255], "colorRange": color_scale_config}
-                        },
-                        "visualChannels": {"colorField": {"name": "reliability", "type": "real"}, "colorScale": "quantize", "sizeField": {"name": "sample_size", "type": "integer"}, "sizeScale": "linear"}
                     }
                 ],
-                "layerOrder": ["eq_income","eq_lowincome","eq_zerocar","eq_transit","eq_vismin","eq_immigrant","eq_seniors","segments","stops"],
+                "layerOrder": ["stops", "segments", "eq_income", "eq_lowincome", "eq_transit", "eq_vismin", "eq_immigrant", "eq_seniors"],
                 "interactionConfig": {
                     "tooltip": {
                         "fieldsToShow": {
@@ -388,7 +380,6 @@ def generate_equity_kepler_config():
                                 {"name": "area_name", "format": None},
                                 {"name": "median_income", "format": None},
                                 {"name": "low_income_pct", "format": None},
-                                {"name": "zero_car_pct", "format": None},
                                 {"name": "transit_commute_pct", "format": None},
                                 {"name": "visible_minority_pct", "format": None},
                                 {"name": "recent_immigrant_pct", "format": None},
@@ -1303,7 +1294,6 @@ with tab_map:
 |---|---|---|
 | Median Household Income ($) | Neighbourhood median household income | Lower-income areas have fewer alternatives to transit |
 | Low-Income Households (%) | Share of residents below low-income measure (after tax) | Directly measures economic vulnerability to service gaps |
-| Zero-Car Households (%) — Transit Captivity | Share of households with no car | Car-free households cannot opt out when transit fails |
 | Transit Commuters (%) — Transit Dependence | Share of employed residents commuting by transit | Shows which communities rely on transit for employment access |
 | Visible Minority Population (%) | Share identifying as visible minority | Racialized communities in Toronto face disproportionate transit impacts |
 | Recent Immigrants — Last 5 Years (%) | Share who immigrated within 5 years | Newcomers are often transit-dependent and less familiar with disruption patterns |
