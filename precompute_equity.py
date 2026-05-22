@@ -42,7 +42,7 @@ from shapely.geometry import shape
 # 1. CONFIGURATION
 # ==============================================================================
 EQUITY_PROFILES_FILE = "neighbourhood-profiles-2021-158-model.xlsx"
-EQUITY_BOUNDARIES_FILE = "toronto_neighbourhoods.geojson"
+EQUITY_BOUNDARIES_FILE = "Neighbourhoods - 4326.geojson"
 OUTPUT_FILE = "equity_neighbourhoods.geojson"
 
 def main():
