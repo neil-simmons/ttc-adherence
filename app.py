@@ -212,8 +212,8 @@ def clean_stop_name(name):
     name = re.sub(r'(?i)\s+(East|West|North|South)\s+Side', '', name)
     name = name.split(' - ')[0].strip()
     name = name.split(' at ')[-1].strip() if ' at ' in name and len(name) > 35 else name
-    if len(name) > 30:
-        name = name[:27] + "..."
+    if len(name) > 45:
+        name = name[:42] + "..."
     return name
 
 def load_precomputed_network():
@@ -602,7 +602,7 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         
         clean_name = clean_stop_name(stop.stop_name)
         
-        # Explicitly formatted hover template to show FULL stop names
+        # Explicitly formatted hover template to fix the "Trace X" confusion
         density_hover_template = (
             f"<b>{stop.stop_name}</b><br>"
             f"Sample Size: {N} runs<br>"
@@ -662,7 +662,6 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         ))
 
     sched_sample_sizes = [len(raw_data['actual_relative_times'][stop_id]) for stop_id in raw_data['st_filtered']['stop_id']]
-    sched_customdata = list(zip(raw_data['st_filtered']['stop_name'], sched_sample_sizes))
 
     sched_trace = go.Scattergl(
         x=raw_data['st_filtered']['relative_sec'] / 60.0, 
@@ -671,8 +670,8 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         line=dict(color='#000000', width=1.4), 
         marker=dict(symbol='circle', size=4.5, color='#000000'), 
         name="Scheduled Baseline",
-        customdata=sched_customdata,
-        hovertemplate="<b>%{customdata[0]}</b> (Scheduled Baseline)<br>Distance: %{y:.2f} km<br>Rel Time: %{x:.1f} mins<br>Sample Size: %{customdata[1]} runs<extra></extra>"
+        customdata=sched_sample_sizes,
+        hovertemplate="<b>Scheduled Baseline</b><br>Distance: %{y:.2f} km<br>Rel Time: %{x:.1f} mins<br>Sample Size: %{customdata} runs<extra></extra>"
     )
     # Add baseline trace LAST so it renders on top of the density curves
     fig_A.add_trace(sched_trace)
@@ -785,173 +784,6 @@ def validate_corridor_selection():
     if curr_end <= new_start:
         if 'end_stop_idx' in st.session_state:
             del st.session_state['end_stop_idx']
-
-# ==============================================================================
-# 5.1 PLAIN-LANGUAGE INSIGHTS PANEL
-# ==============================================================================
-def render_insights_panel(raw_pipeline_data, analysis_results):
-    real_stops = analysis_results['stops_df'][analysis_results['stops_df']['stop_lat'].notna()]
-    if real_stops.empty:
-        return
-
-    st_filt = raw_pipeline_data['st_filtered']
-    art = raw_pipeline_data['actual_relative_times']
-    rel_sec_map = {row.stop_id: row.relative_sec for row in st_filt.itertuples()}
-    
-    trips_analyzed = len(raw_pipeline_data['mode_b_lines'])
-    operating_days = len(set(line['op_date'] for line in raw_pipeline_data['mode_b_lines']))
-    
-    total_weights = real_stops['sample_size'].clip(lower=1)
-    if total_weights.sum() > 0:
-        weighted_reliability = np.average(real_stops['reliability'], weights=total_weights)
-    else:
-        weighted_reliability = 0.0
-
-    # Insight 3 — Worst Stop and Median Delay
-    worst_row = real_stops.loc[real_stops['reliability'].idxmin()]
-    worst_stop_id = worst_row['stop_id']
-    worst_stop_name = worst_row['stop_name']
-    worst_reliability = worst_row['reliability']
-    
-    if worst_stop_id in art and len(art[worst_stop_id]) > 0 and worst_stop_id in rel_sec_map:
-        delays_sec = [t - rel_sec_map[worst_stop_id] for t in art[worst_stop_id]]
-        median_delay_min = np.median(delays_sec) / 60.0
-        delay_str = f"+{median_delay_min:.1f} min late" if median_delay_min > 0 else f"{abs(median_delay_min):.1f} min early"
-    else:
-        delay_str = "N/A"
-
-    # Insight 4 — Best Stop
-    stops_with_5 = real_stops[real_stops['sample_size'] >= 5]
-    if not stops_with_5.empty:
-        best_row = stops_with_5.loc[stops_with_5['reliability'].idxmax()]
-    else:
-        best_row = real_stops.loc[real_stops['reliability'].idxmax()]
-
-    # Insight 5 — Biggest Reliability Cliff
-    merged = real_stops.merge(st_filt[['stop_id', 'shape_dist_traveled']], on='stop_id', how='inner')
-    merged = merged.sort_values('shape_dist_traveled', ascending=True).reset_index(drop=True)
-    
-    cliff_text = ""
-    if len(merged) >= 2:
-        min_diff = 0.0
-        min_idx = -1
-        for i in range(len(merged) - 1):
-            diff = merged.loc[i + 1, 'reliability'] - merged.loc[i, 'reliability']
-            if diff < min_diff:
-                min_diff = diff
-                min_idx = i
-                
-        if min_idx != -1 and min_diff < -8.0:
-            stop_a_name = merged.loc[min_idx, 'stop_name']
-            stop_b_name = merged.loc[min_idx + 1, 'stop_name']
-            cliff_text = f"Sharpest reliability drop: {stop_a_name} → {stop_b_name} ({abs(min_diff):.0f} pp decline)"
-        else:
-            cliff_text = "No single stop-to-stop reliability cliff exceeds 8 percentage points — degradation is gradual."
-    else:
-        cliff_text = "Insufficient stop data to analyze reliability cliffs."
-
-    # Insight 6 — Delay Accumulation Pattern
-    st_filt_sorted = st_filt.sort_values('shape_dist_traveled', ascending=True).reset_index(drop=True)
-    positions = []
-    reliabilities = []
-    for idx, row in enumerate(st_filt_sorted.itertuples()):
-        stop_id = row.stop_id
-        match = real_stops[real_stops['stop_id'] == stop_id]
-        if not match.empty:
-            positions.append(idx)
-            reliabilities.append(match.iloc[0]['reliability'])
-            
-    if len(positions) >= 2:
-        r_matrix = np.corrcoef(positions, reliabilities)
-        r = r_matrix[0, 1] if not np.isnan(r_matrix).any() else 0.0
-        
-        if r < -0.30:
-            pattern_text = f"Delays accumulate along the route (r = {r:.2f}) — earlier stops are more reliable than later ones."
-        elif r > 0.30:
-            pattern_text = f"Reliability improves along the route (r = {r:.2f}) — vehicles recover schedule as the trip progresses."
-        else:
-            pattern_text = f"No clear spatial trend in reliability (r = {r:.2f}) — delays are distributed unevenly rather than building progressively."
-    else:
-        pattern_text = "Insufficient stop data to analyze delay accumulation pattern."
-
-    # Insight 7 — Systematic Timing Bias
-    all_offsets = []
-    for stop_id, times_list in art.items():
-        if stop_id in rel_sec_map and len(times_list) > 0:
-            mean_offset = np.mean(times_list) - rel_sec_map[stop_id]
-            all_offsets.append(mean_offset)
-            
-    if all_offsets:
-        overall_mean = np.mean(all_offsets)
-        if overall_mean > 90:
-            bias_text = f"Service runs systematically late (avg {overall_mean / 60:.1f} min behind schedule across all stops)."
-        elif overall_mean < -90:
-            bias_text = f"Service runs systematically early (avg {abs(overall_mean) / 60:.1f} min ahead of schedule across all stops)."
-        else:
-            bias_text = f"Timing is well-centered around the schedule (avg offset: {overall_mean:+.0f}s)."
-    else:
-        bias_text = "No actual timing data available to compute systematic timing bias."
-
-    # Inject custom styling to scale down metric value font sizes globally
-    st.markdown("""
-    <style>
-    [data-testid="stMetricValue"] {
-        font-size: 1.35rem !important;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # Rendering block
-    with st.expander("📋 Key Findings from This Analysis", expanded=True):
-        # Row 1
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            sub_col1, sub_col2 = st.columns(2)
-            sub_col1.metric("Trips Analyzed", trips_analyzed)
-            sub_col2.metric("Operating Days", operating_days)
-            
-        with col2:
-            delta_val = "+ Above target" if weighted_reliability >= 60 else "- Below 60% threshold"
-            st.metric(
-                label="Network On-Time Rate", 
-                value=f"{weighted_reliability:.1f}%", 
-                delta=delta_val, 
-                delta_color="normal"
-            )
-            
-        with col3:
-            worst_delta = f"- {worst_reliability:.0f}% on-time | median {delay_str}"
-            st.metric(
-                label="Worst Stop", 
-                value=worst_stop_name, 
-                delta=worst_delta, 
-                delta_color="normal",
-                help=f"Full stop name: {worst_stop_name}"
-            )
-            
-        with col4:
-            best_delta = f"+ {best_row['reliability']:.0f}% on-time"
-            st.metric(
-                label="Best Stop", 
-                value=best_row['stop_name'], 
-                delta=best_delta, 
-                delta_color="normal",
-                help=f"Full stop name: {best_row['stop_name']}"
-            )
-            
-        # Row 2
-        st.markdown("---")
-        info_col1, info_col2, info_col3 = st.columns(3)
-        with info_col1:
-            st.info(cliff_text)
-        with info_col2:
-            st.info(pattern_text)
-        with info_col3:
-            st.info(bias_text)
 
 # ==============================================================================
 # 6. FILTER SETTINGS PANEL
@@ -1171,6 +1003,105 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                 st.session_state.show_settings = False
                 st.rerun()
 
+def render_insights_panel(raw_pipeline_data, analysis_results):
+    real_stops = analysis_results['stops_df'][analysis_results['stops_df']['stop_lat'].notna()]
+    st_filt = raw_pipeline_data['st_filtered']
+    art = raw_pipeline_data['actual_relative_times']
+    art_str_keys = {str(k): v for k, v in art.items()}
+    rel_sec_map = {str(row.stop_id): row.relative_sec for row in st_filt.itertuples()}
+    trips_analyzed = len(raw_pipeline_data['mode_b_lines'])
+    operating_days = len(set(line['op_date'] for line in raw_pipeline_data['mode_b_lines']))
+    weighted_reliability = np.average(real_stops['reliability'], weights=real_stops['sample_size'].clip(lower=1))
+
+    # Insight 3 - Worst Stop
+    worst_row = real_stops.loc[real_stops['reliability'].idxmin()]
+    worst_stop_id = str(worst_row['stop_id'])
+    worst_stop_name = worst_row['stop_name']
+    worst_reliability = worst_row['reliability']
+    if worst_stop_id in art_str_keys and len(art_str_keys[worst_stop_id]) > 0 and worst_stop_id in rel_sec_map:
+        delays_sec = [t - rel_sec_map[worst_stop_id] for t in art_str_keys[worst_stop_id]]
+        median_delay_min = np.median(delays_sec) / 60.0
+        delay_str = f"+{median_delay_min:.1f} min late" if median_delay_min > 0.5 else f"{abs(median_delay_min):.1f} min early" if median_delay_min < -0.5 else "on-time median"
+    else:
+        delay_str = "N/A"
+
+    # Insight 4 - Best Stop
+    candidates = real_stops[real_stops['sample_size'] >= 5]
+    if candidates.empty:
+        candidates = real_stops
+    best_row = candidates.loc[candidates['reliability'].idxmax()]
+
+    # Insight 5 - Biggest Reliability Cliff
+    rs_df = real_stops.copy()
+    rs_df['stop_id_str'] = rs_df['stop_id'].astype(str)
+    st_df = st_filt.copy()
+    st_df['stop_id_str'] = st_df['stop_id'].astype(str)
+    merged = pd.merge(rs_df, st_df, on='stop_id_str', how='inner', suffixes=('_rs', '_st'))
+    merged = merged.sort_values('shape_dist_traveled').reset_index(drop=True)
+    
+    diffs = merged['reliability'].diff()
+    min_diff_idx = diffs.idxmin() if len(diffs) > 1 else None
+    if min_diff_idx is not None and not pd.isna(min_diff_idx):
+        drop = diffs.loc[min_diff_idx]
+        if drop < -8:
+            stop_a_name = merged.loc[min_diff_idx - 1, 'stop_name_rs']
+            stop_b_name = merged.loc[min_diff_idx, 'stop_name_rs']
+            cliff_text = f"Sharpest reliability drop: {stop_a_name} → {stop_b_name} ({abs(drop):.0f} pp decline)"
+        else:
+            cliff_text = "No single stop-to-stop reliability cliff exceeds 8 percentage points — degradation is gradual."
+    else:
+        cliff_text = "Not enough data to calculate reliability cliff."
+
+    # Insight 6 - Delay Accumulation
+    positions = np.arange(len(merged))
+    reliabilities = merged['reliability'].values
+    if len(positions) > 1 and np.std(reliabilities) > 0:
+        r = np.corrcoef(positions, reliabilities)[0, 1]
+        if r < -0.30:
+            pattern_text = f"Delays accumulate along the route (r = {r:.2f}) — earlier stops are more reliable than later ones."
+        elif r > 0.30:
+            pattern_text = f"Reliability improves along the route (r = {r:.2f}) — vehicles recover schedule as the trip progresses."
+        else:
+            pattern_text = f"No clear spatial trend in reliability (r = {r:.2f}) — delays are distributed unevenly rather than building progressively."
+    else:
+        pattern_text = "Insufficient variation to determine spatial trends."
+
+    # Insight 7 - Systematic Timing Bias
+    all_offsets = []
+    for sid, times in art_str_keys.items():
+        if sid in rel_sec_map and len(times) > 0:
+            mean_offset = np.mean(times) - rel_sec_map[sid]
+            all_offsets.append(mean_offset)
+            
+    if not all_offsets:
+        bias_text = "Insufficient data to assess timing bias."
+    else:
+        overall_mean = np.mean(all_offsets)
+        if overall_mean > 90:
+            bias_text = f"Service runs systematically late (avg {overall_mean/60:.1f} min behind schedule across all stops)."
+        elif overall_mean < -90:
+            bias_text = f"Service runs systematically early (avg {abs(overall_mean)/60:.1f} min ahead of schedule)."
+        else:
+            bias_text = f"Timing is well-centered around the schedule (avg offset: {overall_mean:+.0f}s)."
+
+    # Layout
+    with st.expander("📋 Key Findings from This Analysis", expanded=True):
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Trips Analyzed", trips_analyzed)
+        col2.metric("Operating Days", operating_days)
+        col3.metric("Network On-Time Rate", f"{weighted_reliability:.1f}%")
+        
+        c2_1, c2_2, c2_3, c2_4 = st.columns(4)
+        c2_1.metric(label="Worst Stop", value=f"{worst_reliability:.0f}% on-time", help=f"{worst_stop_name} | Median: {delay_str}")
+        c2_2.metric(label="Best Stop", value=f"{best_row['reliability']:.0f}% on-time", help=best_row['stop_name'])
+        
+        st.markdown("---")
+        
+        c3_1, c3_2, c3_3 = st.columns(3)
+        c3_1.info(cliff_text)
+        c3_2.info(pattern_text)
+        c3_3.info(bias_text)
+
 # ==============================================================================
 # 7. MAIN UI & TAB LAYOUT
 # ==============================================================================
@@ -1198,8 +1129,7 @@ if st.session_state.show_settings:
         render_filter_panel(available_routes, parquet_path, trips, stop_times, stops, shapes)
         st.markdown("---")
 
-# Render key insights summary for single route runs
-if st.session_state.analysis_results is not None and st.session_state.analysis_results.get('is_multi', False) is False:
+if st.session_state.analysis_results is not None and not st.session_state.analysis_results.get('is_multi', False):
     render_insights_panel(st.session_state.raw_pipeline_data, st.session_state.analysis_results)
 
 tab_map, tab_spaghetti, tab_stats = st.tabs([
