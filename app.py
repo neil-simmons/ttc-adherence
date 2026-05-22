@@ -334,7 +334,7 @@ def generate_equity_kepler_config():
                                 "filled": True, 
                                 "outline": True, 
                                 "thickness": 1.0, # Dark border provides contrast on top of the census shapes
-                                "strokeColor": [15, 15, 15], 
+                                "strokeColor": [255, 255, 255], 
                                 "colorRange": color_scale_config
                             }
                         },
