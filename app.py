@@ -1288,6 +1288,122 @@ def render_insights_panel(raw_pipeline_data, analysis_results):
         c3_3.info(bias_text)
 
 # ==============================================================================
+# 6.5. RECALIBRATION LOGIC
+# ==============================================================================
+def compute_recalibration(st_filtered, actual_relative_times, target_percentile):
+    data = []
+    for row in st_filtered.itertuples():
+        stop_id_str = str(row.stop_id)
+        if stop_id_str not in actual_relative_times or len(actual_relative_times[stop_id_str]) < 3:
+            continue
+        delays_sec = [t - row.relative_sec for t in actual_relative_times[stop_id_str]]
+        adjustment_sec = np.percentile(delays_sec, target_percentile)
+        new_arrival_sec = row.arrival_sec + adjustment_sec
+        
+        total_seconds = int(round(new_arrival_sec))
+        h = total_seconds // 3600
+        m = (total_seconds % 3600) // 60
+        s = total_seconds % 60
+        gtfs_time_str = f"{h:02d}:{m:02d}:{s:02d}"
+        
+        data.append({
+            'stop_name': row.stop_name,
+            'stop_id': stop_id_str,
+            'current_schedule': row.arrival_time,
+            'suggested_schedule': gtfs_time_str,
+            'adjustment_sec': round(adjustment_sec),
+            'adjustment_min': round(adjustment_sec / 60, 1),
+            'sample_size': len(actual_relative_times[stop_id_str]),
+            'shape_dist_traveled': row.shape_dist_traveled
+        })
+        
+    if not data:
+        return None
+        
+    return pd.DataFrame(data).sort_values('shape_dist_traveled')
+
+def generate_gtfs_stop_times_content(recal_df, raw_pipeline_data):
+    now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+    title_info = raw_pipeline_data.get('title_info', '')
+    
+    lines = [
+        "# TTC ScheduleWatch — Suggested Schedule Adjustment",
+        f"# Analysis: {title_info}",
+        f"# Generated: {now_str}",
+        "# NOTE: One adjusted schedule sequence for the analyzed signature only.",
+        "# Not a complete GTFS feed. Reference use only.",
+        "trip_id,arrival_time,departure_time,stop_id,stop_sequence,shape_dist_traveled"
+    ]
+    
+    for idx, row in enumerate(recal_df.itertuples(), start=1):
+        lines.append(f"ADJUSTED_SCHEDULE_1,{row.suggested_schedule},{row.suggested_schedule},{row.stop_id},{idx},{row.shape_dist_traveled:.4f}")
+        
+    return "\n".join(lines)
+
+def render_recalibration_section():
+    if st.session_state.analysis_results is None:
+        return
+    if st.session_state.analysis_results.get('is_multi', False):
+        return
+
+    st.markdown("---")
+    st.markdown("#### 📅 Schedule Recalibration")
+    st.caption(f"Analysis: {st.session_state.raw_pipeline_data['title_info']}")
+
+    st.markdown("""
+Suggests adjusted stop arrival times based on observed historical performance.
+The **target percentile** controls how conservative the new schedule is:
+- **50th (median):** Minimises added journey time. Half of trips will still appear late.
+- **75th:** ~75% of trips appear on-time or early. Moderate buffer.
+- **85th:** Industry-standard target. ~85% of trips appear on-time or early.
+- **95th:** Highly conservative. Near-universal on-time appearance at the cost of longer scheduled journey times.
+""")
+
+    target_pct = st.slider(
+        "Target Percentile",
+        min_value=50, max_value=95, value=85, step=5,
+        key="recal_percentile_slider",
+        help="Higher = more trips appear on-time, but scheduled journey times increase."
+    )
+
+    recal_df = compute_recalibration(
+        st.session_state.raw_pipeline_data['st_filtered'],
+        st.session_state.raw_pipeline_data['actual_relative_times'],
+        target_pct
+    )
+
+    if recal_df is None:
+        st.warning("Insufficient data to compute recalibration (need at least 3 observations per stop).")
+        return
+
+    st.markdown(f"**{len(recal_df)} stops with sufficient data — {target_pct}th percentile target**")
+
+    st.dataframe(
+        recal_df[['stop_name', 'current_schedule', 'suggested_schedule', 'adjustment_min', 'sample_size']],
+        column_config={
+            'stop_name': st.column_config.TextColumn("Stop"),
+            'current_schedule': st.column_config.TextColumn("Current GTFS Time"),
+            'suggested_schedule': st.column_config.TextColumn("Suggested Time"),
+            'adjustment_min': st.column_config.NumberColumn("Adjustment (min)", format="%.1f"),
+            'sample_size': st.column_config.NumberColumn("Observations", format="%d"),
+        },
+        use_container_width=True,
+        hide_index=True
+    )
+
+    gtfs_content = generate_gtfs_stop_times_content(recal_df, st.session_state.raw_pipeline_data)
+    
+    st.download_button(
+        label="⬇️ Download as GTFS stop_times.txt",
+        data=gtfs_content,
+        file_name="suggested_stop_times.txt",
+        mime="text/plain",
+        help="GTFS-format stop_times.txt with suggested adjusted schedule. Not a complete GTFS feed — reference only."
+    )
+
+    st.caption("⚠️ Verify against additional date ranges before operational use. When 'Align to First Observed Stop' mode was active, adjustments incorporate actual departure timing rather than pure GTFS-scheduled departure.")
+
+# ==============================================================================
 # 7. MAIN UI & TAB LAYOUT
 # ==============================================================================
 st.title("TTC ScheduleWatch")
@@ -1438,6 +1554,8 @@ with tab_spaghetti:
                 gmaps_link_container.info("Click a specific coordinate point on a trip line to get a Google Maps link.")
         else:
             gmaps_link_container.caption("👉 Click any data point on the chart to generate a Google Maps link for that exact location.")
+            
+        render_recalibration_section()
 
 with tab_stats:
     if not st.session_state.analysis_results:
@@ -1447,6 +1565,8 @@ with tab_stats:
     else:
         st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
         st.plotly_chart(st.session_state.analysis_results['fig_A'], use_container_width=True, height=900, config=PLOTLY_CONFIG)
+        
+        render_recalibration_section()
 
 st.markdown("---")
 st.caption("**Data Privacy Statement:** All data is open public data sourced from the City of Toronto Open Data Portal. © 2026 Neil Simmons. All rights reserved.")
