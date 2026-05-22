@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import gpd as gpd
 import geopandas as gpd
 from shapely.geometry import LineString, Point
 from shapely.ops import substring, linemerge
@@ -602,9 +603,9 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         
         clean_name = clean_stop_name(stop.stop_name)
         
-        # Explicitly formatted hover template to fix the "Trace X" confusion
+        # Explicitly formatted hover template to show FULL stop names
         density_hover_template = (
-            f"<b>{clean_name}</b><br>"
+            f"<b>{stop.stop_name}</b><br>"
             f"Sample Size: {N} runs<br>"
             "Rel Time: %{x:.1f} mins<extra></extra>"
         )
@@ -662,6 +663,7 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         ))
 
     sched_sample_sizes = [len(raw_data['actual_relative_times'][stop_id]) for stop_id in raw_data['st_filtered']['stop_id']]
+    sched_customdata = list(zip(raw_data['st_filtered']['stop_name'], sched_sample_sizes))
 
     sched_trace = go.Scattergl(
         x=raw_data['st_filtered']['relative_sec'] / 60.0, 
@@ -670,8 +672,8 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         line=dict(color='#000000', width=1.4), 
         marker=dict(symbol='circle', size=4.5, color='#000000'), 
         name="Scheduled Baseline",
-        customdata=sched_sample_sizes,
-        hovertemplate="<b>Scheduled Baseline</b><br>Distance: %{y:.2f} km<br>Rel Time: %{x:.1f} mins<br>Sample Size: %{customdata} runs<extra></extra>"
+        customdata=sched_customdata,
+        hovertemplate="<b>%{customdata[0]}</b> (Scheduled Baseline)<br>Distance: %{y:.2f} km<br>Rel Time: %{x:.1f} mins<br>Sample Size: %{customdata[1]} runs<extra></extra>"
     )
     # Add baseline trace LAST so it renders on top of the density curves
     fig_A.add_trace(sched_trace)
@@ -891,6 +893,18 @@ def render_insights_panel(raw_pipeline_data, analysis_results):
     else:
         bias_text = "No actual timing data available to compute systematic timing bias."
 
+    # Inject custom styling to scale down metric value font sizes globally
+    st.markdown("""
+    <style>
+    [data-testid="stMetricValue"] {
+        font-size: 1.35rem !important;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
     # Rendering block
     with st.expander("📋 Key Findings from This Analysis", expanded=True):
         # Row 1
@@ -902,15 +916,33 @@ def render_insights_panel(raw_pipeline_data, analysis_results):
             sub_col2.metric("Operating Days", operating_days)
             
         with col2:
-            delta_color = "normal" if weighted_reliability >= 60 else "inverse"
-            delta_val = "Above target" if weighted_reliability >= 60 else "Below 60% threshold"
-            st.metric("Network On-Time Rate", f"{weighted_reliability:.1f}%", delta=delta_val, delta_color=delta_color)
+            delta_val = "+ Above target" if weighted_reliability >= 60 else "- Below 60% threshold"
+            st.metric(
+                label="Network On-Time Rate", 
+                value=f"{weighted_reliability:.1f}%", 
+                delta=delta_val, 
+                delta_color="normal"
+            )
             
         with col3:
-            st.metric(label="Worst Stop", value=worst_stop_name, delta=f"{worst_reliability:.0f}% on-time | median {delay_str}", delta_color="inverse")
+            worst_delta = f"- {worst_reliability:.0f}% on-time | median {delay_str}"
+            st.metric(
+                label="Worst Stop", 
+                value=worst_stop_name, 
+                delta=worst_delta, 
+                delta_color="normal",
+                help=f"Full stop name: {worst_stop_name}"
+            )
             
         with col4:
-            st.metric(label="Best Stop", value=best_row['stop_name'], delta=f"{best_row['reliability']:.0f}% on-time", delta_color="normal")
+            best_delta = f"+ {best_row['reliability']:.0f}% on-time"
+            st.metric(
+                label="Best Stop", 
+                value=best_row['stop_name'], 
+                delta=best_delta, 
+                delta_color="normal",
+                help=f"Full stop name: {best_row['stop_name']}"
+            )
             
         # Row 2
         st.markdown("---")
