@@ -298,7 +298,7 @@ def generate_kepler_config():
                 "interactionConfig": {
                     "tooltip": {
                         "fieldsToShow": {
-                            "segments": [{"name": "segment", "format": None}, {"name": "route_id", "format": None}, {"name": "avg_reliability", "format": ".1f"}],
+                            "segments": [{"name": "segment", "format": None}, {"name": "route_id", "format": None}, {"name": "direction", "format": None}, {"name": "avg_reliability", "format": ".1f"}],
                             "stops": [{"name": "stop_name", "format": None}, {"name": "route_id", "format": None}, {"name": "reliability", "format": ".1f"}]
                         },
                         "enabled": True
@@ -417,7 +417,7 @@ def generate_equity_kepler_config():
                                 {"name": "recent_immigrant_pct", "format": None},
                                 {"name": "senior_pct", "format": None}
                             ],
-                            "segments": [{"name": "segment", "format": None}, {"name": "route_id", "format": None}, {"name": "avg_reliability", "format": ".1f"}],
+                            "segments": [{"name": "segment", "format": None}, {"name": "route_id", "format": None}, {"name": "direction", "format": None}, {"name": "avg_reliability", "format": ".1f"}],
                             "stops": [{"name": "stop_name", "format": None}, {"name": "route_id", "format": None}, {"name": "reliability", "format": ".1f"}]
                         },
                         "enabled": True
@@ -613,7 +613,7 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
     if not mode_b_lines: return None
     return {'st_filtered': st_filtered, 'actual_relative_times': actual_relative_times, 'mode_b_lines': mode_b_lines, 'shape_id': sample_shape_id}
 
-def build_spatial_data(st_filtered, actual_relative_times, window_early, window_late, shapes, shape_id, route_id, route_idx):
+def build_spatial_data(st_filtered, actual_relative_times, window_early, window_late, shapes, shape_id, route_id, route_idx, direction):
     reliability_dict, reliability_vals, sample_sizes = {}, {}, {}
     for stop in st_filtered.itertuples():
         arr = actual_relative_times[stop.stop_id]
@@ -667,10 +667,10 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
             if end_d > start_d: geom = substring(full_route_line, start_d, end_d)
         if geom is None or geom.is_empty: geom = LineString([(float(s1.stop_lon), float(s1.stop_lat)), (float(s2.stop_lon), float(s2.stop_lat))])
         
-        # Calculate base segment sample size from boundary stop samples
         seg_samples = (sample_sizes[s1.stop_id] + sample_sizes[s2.stop_id]) / 2.0
         segments.append({
             'route_id': route_id, 
+            'direction': direction, # Store the direction headsign 
             'segment': f"{s1.stop_name} to {s2.stop_name}", 
             'avg_reliability': (reliability_vals[s1.stop_id] + reliability_vals[s2.stop_id]) / 2.0, 
             'sample_size': seg_samples,
@@ -715,7 +715,7 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
     st.session_state.raw_pipeline_data = raw_data
     
     stops_df, segments_df, reliability_dict, reliability_vals = build_spatial_data(
-        raw_data['st_filtered'], raw_data['actual_relative_times'], s2_vars['window_early'], s2_vars['window_late'], shapes, raw_data['shape_id'], selected_route, 0
+        raw_data['st_filtered'], raw_data['actual_relative_times'], s2_vars['window_early'], s2_vars['window_late'], shapes, raw_data['shape_id'], selected_route, 0, selected_dir
     )
     stops_df, segments_df = inject_legend_anchors(stops_df, segments_df)
     
@@ -886,7 +886,7 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
                 if not raw_data: continue
                 
                 stops_df, segments_df, _, _ = build_spatial_data(
-                    raw_data['st_filtered'], raw_data['actual_relative_times'], s2_vars['window_early'], s2_vars['window_late'], shapes, raw_data['shape_id'], route, route_idx
+                    raw_data['st_filtered'], raw_data['actual_relative_times'], s2_vars['window_early'], s2_vars['window_late'], shapes, raw_data['shape_id'], route, route_idx, direction
                 )
                 all_stops.append(stops_df)
                 all_segments.append(segments_df)
@@ -916,11 +916,10 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
 
         if all_segments:
             master_segments = pd.concat(all_segments, ignore_index=True)
-            # Create weighted metric using boundary-based sample size
             master_segments['seg_rel_weighted'] = master_segments['avg_reliability'] * master_segments['sample_size']
             
-            # Aggregate parallel segments using weighted micro-average weights
-            master_segments = master_segments.groupby(['route_id', 'segment'], as_index=False).agg({
+            # Group by route_id and direction to keep different travel directions separate
+            master_segments = master_segments.groupby(['route_id', 'direction', 'segment'], as_index=False).agg({
                 'seg_rel_weighted': 'sum',
                 'sample_size': 'sum',
                 'geometry': 'first'
