@@ -1021,15 +1021,19 @@ def render_insights_panel(raw_pipeline_data, analysis_results):
     if worst_stop_id in art_str_keys and len(art_str_keys[worst_stop_id]) > 0 and worst_stop_id in rel_sec_map:
         delays_sec = [t - rel_sec_map[worst_stop_id] for t in art_str_keys[worst_stop_id]]
         median_delay_min = np.median(delays_sec) / 60.0
-        delay_str = f"+{median_delay_min:.1f} min late" if median_delay_min > 0.5 else f"{abs(median_delay_min):.1f} min early" if median_delay_min < -0.5 else "on-time median"
+        delay_str = f"Typically {median_delay_min:.1f} min late" if median_delay_min > 0.5 else f"Typically {abs(median_delay_min):.1f} min early" if median_delay_min < -0.5 else "Typically on-time"
     else:
-        delay_str = "N/A"
+        delay_str = "No timing data"
+        
+    worst_short = worst_stop_name[:27] + "..." if len(worst_stop_name) > 30 else worst_stop_name
 
     # Insight 4 - Best Stop
     candidates = real_stops[real_stops['sample_size'] >= 5]
     if candidates.empty:
         candidates = real_stops
     best_row = candidates.loc[candidates['reliability'].idxmax()]
+    best_stop_name = best_row['stop_name']
+    best_short = best_stop_name[:27] + "..." if len(best_stop_name) > 30 else best_stop_name
 
     # Insight 5 - Biggest Reliability Cliff
     rs_df = real_stops.copy()
@@ -1092,8 +1096,16 @@ def render_insights_panel(raw_pipeline_data, analysis_results):
         col3.metric("Network On-Time Rate", f"{weighted_reliability:.1f}%")
         
         c2_1, c2_2, c2_3, c2_4 = st.columns(4)
-        c2_1.metric(label="Worst Stop", value=f"{worst_reliability:.0f}% on-time", help=f"{worst_stop_name} | Median: {delay_str}")
-        c2_2.metric(label="Best Stop", value=f"{best_row['reliability']:.0f}% on-time", help=best_row['stop_name'])
+        c2_1.metric(
+            label=f"Worst: {worst_short}", 
+            value=f"{worst_reliability:.0f}% on-time", 
+            help=f"Full Name: {worst_stop_name}\n{delay_str}"
+        )
+        c2_2.metric(
+            label=f"Best: {best_short}", 
+            value=f"{best_row['reliability']:.0f}% on-time", 
+            help=f"Full Name: {best_stop_name}"
+        )
         
         st.markdown("---")
         
