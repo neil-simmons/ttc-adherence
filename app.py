@@ -1360,7 +1360,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
             'isolated_trips': st.session_state.isolated_trips if (not adv_mode and 'isolated_trips' in st.session_state) else []
         }
         
-         if not adv_mode:
+        if not adv_mode:
             if not selected_sig_indices:
                 st.error("Please select at least one Schedule Signature.")
                 return
