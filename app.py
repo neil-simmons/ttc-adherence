@@ -541,6 +541,7 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
 
     if len(st_filtered) < 2: return None
 
+    # Track corridor minimum and maximum bound values
     min_dist = st_filtered['shape_dist_traveled'].min()
     max_dist = st_filtered['shape_dist_traveled'].max()
 
@@ -561,61 +562,31 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
 
     actual_relative_times = {stop_id: [] for stop_id in st_filtered['stop_id']}
     mode_b_lines          = []
-    
-    # --- DIAGNOSTIC TRACKER ---
-    diagnostic_log = []
 
     for (op_date, t_id), group in trip_hist.groupby(['op_date', 'trip_id'], observed=True):
         group = group.sort_values('system_time').reset_index(drop=True)
-        if len(group) < 3: 
-            diagnostic_log.append({'trip': t_id, 'date': op_date, 'reason': 'Less than 3 GPS pings'})
-            continue
+        if len(group) < 3: continue
 
         gtfs_start_sec = s2_vars['trip_start_dict'].get(t_id)
-        if gtfs_start_sec is None or group['official_dist_km'].isna().all(): 
-            continue
+        if gtfs_start_sec is None or group['official_dist_km'].isna().all(): continue
 
         max_dist_idx = group['official_dist_km'].idxmax()
         group = group.loc[:max_dist_idx].copy()
         group['official_dist_km'] = group['official_dist_km'].cummax()
         group = group.drop_duplicates(subset=['official_dist_km'], keep='first')
-        
-        # Save the true first ping before clipping
-        first_ping_raw = group['official_dist_km'].iloc[0]
 
-        # ORIGINAL BEHAVIOR: Clip to visual corridor
+        # Filter points specifically to the selected corridor range
         group = group[(group['official_dist_km'] >= min_dist) & (group['official_dist_km'] <= max_dist)].copy()
-        if len(group) < 2: 
-            diagnostic_log.append({'trip': t_id, 'date': op_date, 'reason': '0 pings inside corridor bounds'})
-            continue
+        if len(group) < 2: continue
 
-        # Save the first ping after clipping
-        first_ping_clipped = group['official_dist_km'].iloc[0]
-        
         interpolated_times = np.interp(st_filtered['shape_dist_traveled'].values, group['official_dist_km'].values, group['op_seconds'].values, left=np.nan, right=np.nan)
         run_interpolations = {sid: t for sid, t in zip(st_filtered['stop_id'], interpolated_times) if not np.isnan(t)}
-        
-        if not run_interpolations: 
-            diagnostic_log.append({
-                'trip': t_id, 'date': op_date, 
-                'first_ping_raw': first_ping_raw, 
-                'first_ping_clipped': first_ping_clipped,
-                'first_stop_scheduled': st_filtered.iloc[0]['shape_dist_traveled'],
-                'reason': 'np.interp returned NaN (Out of bounds)'
-            })
-            continue
+        if not run_interpolations: continue
 
         anchor_stop = st_filtered.iloc[1] if len(st_filtered) > 1 else st_filtered.iloc[0]
         anchor_stop_dist = anchor_stop['shape_dist_traveled']
 
-        if group['official_dist_km'].iloc[0] > anchor_stop_dist: 
-            diagnostic_log.append({
-                'trip': t_id, 'date': op_date, 
-                'first_ping_clipped': group['official_dist_km'].iloc[0], 
-                'anchor_stop_dist': anchor_stop_dist,
-                'reason': 'First ping > anchor stop (Mid-route check)'
-            })
-            continue
+        if group['official_dist_km'].iloc[0] > anchor_stop_dist: continue
 
         if s2_vars['force_t0']:
             anchor_stop_id = anchor_stop['stop_id']
@@ -640,6 +611,7 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
             group['prev_speed_kmh'] = np.where(time_diff > 0, (dist_diff / time_diff) * 3600, 0).clip(min=0)
             group['relative_min'] = (group['op_seconds'] - anchor_sec) / 60.0
 
+            # Trace sequence and inject None element where sequential pings break tracking bounds
             raw_x = group['relative_min'].tolist()
             raw_y = group['official_dist_km'].tolist()
             raw_lat = group['latitude'].tolist()
@@ -647,17 +619,28 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
             raw_speed = group['prev_speed_kmh'].tolist()
             raw_systime = group['system_time'].tolist()
 
-            raw_abs = (pd.to_datetime(group['system_time'], unit='s', utc=True).dt.tz_convert('America/Toronto').dt.strftime('%I:%M:%S %p').tolist())
+            raw_abs = (pd.to_datetime(group['system_time'], unit='s', utc=True)
+                       .dt.tz_convert('America/Toronto')
+                       .dt.strftime('%I:%M:%S %p').tolist())
 
             x_gaps, y_gaps, abs_gaps, lat_gaps, lon_gaps, speed_gaps = [], [], [], [], [], []
 
             for i in range(len(raw_x)):
                 if i > 0 and (raw_systime[i] - raw_systime[i-1]) > MAX_ALLOWED_PING_GAP_SEC:
-                    x_gaps.append(None); y_gaps.append(None); abs_gaps.append(None)
-                    lat_gaps.append(None); lon_gaps.append(None); speed_gaps.append(None)
+                    # Injected None breaks the Plotly line visualization when gaps are too large
+                    x_gaps.append(None)
+                    y_gaps.append(None)
+                    abs_gaps.append(None)
+                    lat_gaps.append(None)
+                    lon_gaps.append(None)
+                    speed_gaps.append(None)
 
-                x_gaps.append(raw_x[i]); y_gaps.append(raw_y[i]); abs_gaps.append(raw_abs[i])
-                lat_gaps.append(raw_lat[i]); lon_gaps.append(raw_lon[i]); speed_gaps.append(raw_speed[i])
+                x_gaps.append(raw_x[i])
+                y_gaps.append(raw_y[i])
+                abs_gaps.append(raw_abs[i])
+                lat_gaps.append(raw_lat[i])
+                lon_gaps.append(raw_lon[i])
+                speed_gaps.append(raw_speed[i])
 
             mode_b_lines.append({
                 'name': f"{op_date} | {t_id}", 'op_date': str(op_date), 'start_time': format_seconds_to_time(list(run_interpolations.values())[0]),
@@ -665,10 +648,7 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
                 'abs_time': abs_gaps, 'lat': lat_gaps, 'lon': lon_gaps, 'speed': speed_gaps
             })
             
-    if not mode_b_lines: 
-        # Return the diagnostic log if tracking fails
-        return {'debug_mode': True, 'log': pd.DataFrame(diagnostic_log)}
-        
+    if not mode_b_lines: return None
     return {'st_filtered': st_filtered, 'actual_relative_times': actual_relative_times, 'mode_b_lines': mode_b_lines, 'shape_id': sample_shape_id}
 
 def build_spatial_data(st_filtered, actual_relative_times, window_early, window_late, shapes, shape_id, route_id, route_idx, direction):
@@ -755,14 +735,7 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         return False
     
     raw_data = run_tracking(df_hist_raw, trip_list, s2_vars, stop_times, stops, gtfs_route_trips, shapes)
-    # --- DIAGNOSTIC UI INJECTION ---
-    if raw_data and raw_data.get('debug_mode'):
-        st.error("Tracking failed. The diagnostic tracker captured the following rejected trips:")
-        st.dataframe(raw_data['log'])
-        return False
-    elif not raw_data:
-        st.error("Tracking failed entirely (no GPS logs existed for these dates).")
-        return False
+    
     if not raw_data:
         st.error("Tracking failed or no historical data found for these scheduled trips.")
         return False
