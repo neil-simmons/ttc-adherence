@@ -1228,58 +1228,72 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                     announce_sr(f"Found {len(sig_list)} available schedule signatures matching your parameters.")
                     
             if st.session_state.signatures_loaded:
-                if not st.session_state.signature_list:
-                    st.warning("No GTFS Schedule Signatures scheduled to run within your current Time Window.")
-                else:
-                    sig_opts = {i: f"({s['runs']} recorded runs) | {s['orig']} → {s['dest']} | Scheduled: {format_seconds_to_time(s['min_sec'])}–{format_seconds_to_time(s['max_sec'])}" for i, s in enumerate(st.session_state.signature_list)}
-                    selected_sig_idx = st.selectbox(
-                        "Select Schedule Signature", 
-                        options=list(sig_opts.keys()), 
-                        format_func=lambda x: sig_opts[x], 
-                        key="sig_selection", 
-                        on_change=_clear_isolated_trips
+    if not st.session_state.signature_list:
+        st.warning("No GTFS Schedule Signatures scheduled to run within your current Time Window.")
+    else:
+        sig_opts = {
+            i: f"({s['runs']} runs) | {s['orig']} → {s['dest']} | Scheduled: {format_seconds_to_time(s['min_sec'])}–{format_seconds_to_time(s['max_sec'])}" 
+            for i, s in enumerate(st.session_state.signature_list)
+        }
+        
+        # Changed selectbox to multiselect
+        selected_sig_indices = st.multiselect(
+            "Select Schedule Signature(s)", 
+            options=list(sig_opts.keys()), 
+            default=[0] if sig_opts else [],
+            format_func=lambda x: sig_opts[x], 
+            key="sig_selection", 
+            on_change=_clear_isolated_trips
+        )
+
+        if selected_sig_indices:
+            chosen_sigs = [st.session_state.signature_list[idx] for idx in selected_sig_indices]
+            stop_sequences = [[stop[0] for stop in s['signature']] for s in chosen_sigs]
+            
+            # Sequence validation across multiselected signatures
+            all_sequences_identical = all(seq == stop_sequences[0] for seq in stop_sequences)
+            st.session_state.all_sequences_identical = all_sequences_identical
+            
+            if len(selected_sig_indices) > 1:
+                if not all_sequences_identical:
+                    st.warning(
+                        "⚠️ **Different Stop Sequences Selected:** The chosen signatures do not share "
+                        "the same sequence of stops. Sequential charts (Heatmaps, Boxplots, and Spaghetti charts) will be disabled."
                     )
-                    
-                    st.markdown("---")
-                    st.markdown("**Corridor Selection** (Optional)")
-                    
-                    selected_sig = st.session_state.signature_list[selected_sig_idx]
-                    sample_t = selected_sig['t_ids'][0]
-                    
-                    sample_stops = stop_times[stop_times['trip_id'] == sample_t].sort_values('stop_sequence')
-                    sample_stops = sample_stops.merge(stops, on='stop_id', how='left')
-                    if sample_stops['shape_dist_traveled'].max() > 500: 
-                        sample_stops['shape_dist_traveled'] /= 1000.0
-                        
-                    stop_opts = sample_stops.to_dict('records')
-                    
-                    col_start, col_end = st.columns(2)
-                    with col_start:
-                        start_opts = list(range(len(stop_opts) - 1)) if len(stop_opts) > 1 else list(range(len(stop_opts)))
-                        
-                        start_stop_idx = st.selectbox(
-                            "Start Stop", 
-                            options=start_opts, 
-                            format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
-                            key="start_stop_idx",
-                            on_change=validate_corridor_selection
-                        )
-                        
-                    with col_end:
-                        end_opts = list(range(start_stop_idx + 1, len(stop_opts))) if len(stop_opts) > 1 else list(range(len(stop_opts)))
-                        
-                        # Only set default to the last option if there is NO memory of a previous selection
-                        if "end_stop_idx" not in st.session_state or st.session_state["end_stop_idx"] not in end_opts:
-                            st.session_state["end_stop_idx"] = end_opts[-1] if end_opts else 0
-                            
-                        end_stop_idx = st.selectbox(
-                            "End Stop", 
-                            options=end_opts, 
-                            format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
-                            key="end_stop_idx"
-                        )
-                        
-                    selected_stop_ids = [s['stop_id'] for s in stop_opts[start_stop_idx : end_stop_idx + 1]]
+                else:
+                    st.info("ℹ️ **Compatible Signatures:** All chosen signatures share an identical sequence of physical stops.")
+
+            # Corridor Selection configuration UI (uses the primary selected signature as the template)
+            selected_sig = chosen_sigs[0]
+            sample_t = selected_sig['t_ids'][0]
+            sample_stops = stop_times[stop_times['trip_id'] == sample_t].sort_values('stop_sequence')
+            sample_stops = sample_stops.merge(stops, on='stop_id', how='left')
+            if sample_stops['shape_dist_traveled'].max() > 500: 
+                sample_stops['shape_dist_traveled'] /= 1000.0
+                
+            stop_opts = sample_stops.to_dict('records')
+            
+            col_start, col_end = st.columns(2)
+            with col_start:
+                start_opts = list(range(len(stop_opts) - 1)) if len(stop_opts) > 1 else list(range(len(stop_opts)))
+                start_stop_idx = st.selectbox(
+                    "Start Stop", 
+                    options=start_opts, 
+                    format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
+                    key="start_stop_idx",
+                    on_change=validate_corridor_selection
+                )
+            with col_end:
+                end_opts = list(range(start_stop_idx + 1, len(stop_opts))) if len(stop_opts) > 1 else list(range(len(stop_opts)))
+                if "end_stop_idx" not in st.session_state or st.session_state["end_stop_idx"] not in end_opts:
+                    st.session_state["end_stop_idx"] = end_opts[-1] if end_opts else 0
+                end_stop_idx = st.selectbox(
+                    "End Stop", 
+                    options=end_opts, 
+                    format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
+                    key="end_stop_idx"
+                )
+            selected_stop_ids = [s['stop_id'] for s in stop_opts[start_stop_idx : end_stop_idx + 1]]
 
     with st.expander("Advanced Configuration"):
         st.slider("On-Time Reliability Window (Seconds)", min_value=-300, max_value=300, step=5, key="window_slider", help="Negative values allow early arrivals. Positive values allow late arrivals.")
@@ -1348,11 +1362,24 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
             'isolated_trips': st.session_state.isolated_trips if (not adv_mode and 'isolated_trips' in st.session_state) else []
         }
         
-        if not adv_mode:
-            selected_sig = st.session_state.signature_list[selected_sig_idx]
-            s2_vars['signature_t_ids'] = selected_sig['t_ids']
+         if not adv_mode:
+            if not selected_sig_indices:
+                st.error("Please select at least one Schedule Signature.")
+                return
+                
+            combined_trip_ids = []
+            for idx in selected_sig_indices:
+                combined_trip_ids.extend(st.session_state.signature_list[idx]['t_ids'])
+
+            primary_sig = st.session_state.signature_list[selected_sig_indices[0]]
+            sig_desc = f"{primary_sig['orig']} → {primary_sig['dest']}"
+            if len(selected_sig_indices) > 1:
+                sig_desc += f" (+ {len(selected_sig_indices) - 1} other signature variations)"
+
+            s2_vars['signature_t_ids'] = combined_trip_ids
             s2_vars['trip_start_dict'] = st.session_state.trip_start_dict
-            s2_vars['sig_desc'] = f"{selected_sig['orig']} → {selected_sig['dest']}"
+            s2_vars['sig_desc'] = sig_desc
+            s2_vars['sequences_identical'] = st.session_state.get('all_sequences_identical', True)
         
         with st.spinner("Processing analysis pipeline..."):
             if adv_mode:
@@ -1717,11 +1744,22 @@ def build_delay_variance_chart(trip_stats):
     return fig
 
 def build_equity_scatter(stops_df, equity_gdf, equity_field, metric_label):
+    # Create a copy of stops and split/explode route_id if they are comma-separated 
+    # (common in precomputed network or multi-route pipelines)
+    stops_clean = stops_df.copy()
+    stops_clean['route_id'] = stops_clean['route_id'].astype(str)
+    
+    # Split "501, 504" into ['501', '504'] and create separate rows for clean coloring
+    stops_clean['route_id'] = stops_clean['route_id'].str.split(', ')
+    stops_clean = stops_clean.explode('route_id')
+    stops_clean['route_id'] = stops_clean['route_id'].str.strip()
+
     stops_gdf = gpd.GeoDataFrame(
-        stops_df.copy(),
-        geometry=gpd.points_from_xy(stops_df['stop_lon'], stops_df['stop_lat']),
+        stops_clean,
+        geometry=gpd.points_from_xy(stops_clean['stop_lon'], stops_clean['stop_lat']),
         crs=LATLON_PROJ
     )
+    
     joined = gpd.sjoin(
         stops_gdf[['stop_name','route_id','reliability','sample_size','geometry']],
         equity_gdf[['area_name', equity_field, 'geometry']],
@@ -1731,17 +1769,26 @@ def build_equity_scatter(stops_df, equity_gdf, equity_field, metric_label):
     n_total = len(stops_df[stops_df['stop_lat'].notna()])
     n_joined = len(joined)
 
-    unique_routes = sorted(joined['route_id'].astype(str).unique())
+    unique_routes = sorted(joined['route_id'].unique(), key=lambda x: str(x))
     fig = go.Figure()
 
     for i, route in enumerate(unique_routes):
         color = WCAG_ROUTE_COLORS[i % len(WCAG_ROUTE_COLORS)]
         shape = WCAG_ROUTE_SHAPES[i % len(WCAG_ROUTE_SHAPES)]
-        route_data = joined[joined['route_id'].astype(str) == route]
+        route_data = joined[joined['route_id'] == route]
+        
         fig.add_trace(go.Scatter(
-            x=route_data[equity_field], y=route_data['reliability'],
-            mode='markers', name=f"Route {route}",
-            marker=dict(size=12, color=color, symbol=shape, opacity=0.80, line=dict(width=1.0, color='#FFFFFF')),
+            x=route_data[equity_field], 
+            y=route_data['reliability'],
+            mode='markers', 
+            name=f"Route {route}",
+            marker=dict(
+                size=11, 
+                color=color, 
+                symbol=shape, 
+                opacity=0.85, 
+                line=dict(width=1.0, color='#FFFFFF')
+            ),
             text=route_data['stop_name'] + ' — ' + route_data['area_name'].fillna('Outside boundary'),
             hovertemplate="%{text}<br>" + metric_label + ": %{x:.1f}<br>Reliability: %{y:.1f}%<extra></extra>"
         ))
@@ -1759,9 +1806,11 @@ def build_equity_scatter(stops_df, equity_gdf, equity_field, metric_label):
         ))
 
     fig.update_layout(
-        title=f"Stop Reliability vs {metric_label}  —  N = {n_joined} of {n_total} stops",
-        xaxis_title=metric_label, yaxis_title="On-Time Reliability (%)",
-        yaxis=dict(range=[0, 100]), template="plotly_white",
+        title=f"Stop Reliability vs {metric_label} — N = {n_joined} stops plotted",
+        xaxis_title=metric_label, 
+        yaxis_title="On-Time Reliability (%)",
+        yaxis=dict(range=[0, 105]), 
+        template="plotly_white",
         legend=dict(title="Route", x=1.02, xanchor='left')
     )
     return fig
@@ -2473,78 +2522,90 @@ with tab_analytics:
         st.markdown("### 🏘️ Equity Analysis")
 
         try:
-            equity_gdf     = load_equity_data()
+            equity_gdf = load_equity_data()
             equity_available = (equity_gdf is not None and not equity_gdf.empty)
         except Exception:
             equity_available = False
 
         if not equity_available:
             st.info(
-                "🏘️ **Equity data is not available.** Upload "
-                "`equity_neighbourhoods.geojson` to the HuggingFace repository "
-                "to enable this section. See the Route Reliability Map tab for "
-                "upload instructions."
-            )
-        elif not has_analysis:
-            st.info(
-                "🏘️ **Run an analysis first** to enable the equity scatter chart."
+                "🏘️ **Equity data is not available.** Upload `equity_neighbourhoods.geojson` "
+                "to the HuggingFace repository to enable this section."
             )
         else:
-            EQUITY_METRIC_OPTIONS = {
-                "Median Household Income ($)":          "median_income",
-                "Low-Income Households (%)":            "low_income_pct",
-                "Transit Commuters (%)":                "transit_commute_pct",
-                "Visible Minority Population (%)":      "visible_minority_pct",
-                "Recent Immigrants — Last 5 Yrs (%)":   "recent_immigrant_pct",
-                "Seniors 65+ (%)":                      "senior_pct",
-            }
+            # 1. Determine active stops dataset (Active Analysis or Precomputed Startup Fallback)
+            active_stops_df = None
+            is_precomputed_fallback = False
 
-            st.caption(
-                "Each dot represents one stop, plotted against the equity indicator "
-                "for the neighbourhood it falls within. Dots are colour-coded and "
-                "shape-coded by route — both visual channels are used so the chart "
-                "remains readable for users with colour vision differences."
-            )
+            if st.session_state.analysis_results is not None:
+                active_stops_df = st.session_state.analysis_results.get('stops_df')
+            else:
+                pre_network = load_precomputed_network()
+                if pre_network:
+                    active_stops_df = pd.DataFrame(pre_network['stops'])
+                    is_precomputed_fallback = True
 
-            selected_label = st.selectbox(
-                "Equity metric to compare against stop reliability:",
-                options = list(EQUITY_METRIC_OPTIONS.keys()),
-                key     = "equity_metric_select"
-            )
-            selected_field = EQUITY_METRIC_OPTIONS[selected_label]
+            if active_stops_df is None or active_stops_df.empty:
+                st.info("🏘️ No stop reliability data is loaded to generate the scatter comparison.")
+            else:
+                EQUITY_METRIC_OPTIONS = {
+                    "Median Household Income ($)":          "median_income",
+                    "Low-Income Households (%)":            "low_income_pct",
+                    "Transit Commuters (%)":                "transit_commute_pct",
+                    "Visible Minority Population (%)":      "visible_minority_pct",
+                    "Recent Immigrants — Last 5 Yrs (%)":   "recent_immigrant_pct",
+                    "Seniors 65+ (%)":                      "senior_pct",
+                }
 
-            stops_clean = st.session_state.analysis_results['stops_df']
-            stops_clean = stops_clean[stops_clean['stop_lat'].notna()].copy()
-
-            fig_eq = build_equity_scatter(
-                stops_clean, equity_gdf, selected_field, selected_label
-            )
-            st.plotly_chart(fig_eq, use_container_width=True, config=PLOTLY_CONFIG, key="chart_equity")
-            announce_sr(
-                f"Equity scatter chart rendered: stop reliability versus "
-                f"{selected_label}."
-            )
-            
-            with st.expander("📋 View data as accessible table", expanded=False):
-                st.caption(f"Accessible data table for Equity Scatter ({selected_label})")
-                stops_gdf = gpd.GeoDataFrame(
-                    stops_clean.copy(),
-                    geometry=gpd.points_from_xy(stops_clean['stop_lon'], stops_clean['stop_lat']),
-                    crs=LATLON_PROJ
+                st.caption(
+                    "Each dot represents one stop, plotted against the equity indicator "
+                    "for the neighbourhood it falls within. Dots are colour-coded and "
+                    "shape-coded by route to support accessibility and high-contrast viewing."
                 )
-                joined = gpd.sjoin(
-                    stops_gdf[['stop_name','route_id','reliability','geometry']],
-                    equity_gdf[['area_name', selected_field, 'geometry']],
-                    how='left', predicate='within'
+
+                selected_label = st.selectbox(
+                    "Equity metric to compare against stop reliability:",
+                    options=list(EQUITY_METRIC_OPTIONS.keys()),
+                    key="equity_metric_select_analytics_tab"
                 )
-                joined = joined.dropna(subset=[selected_field, 'reliability']).sort_values('reliability')
-                joined = joined.rename(columns={
-                    'stop_name': 'Stop Name', 'route_id': 'Route',
-                    'area_name': 'Neighbourhood', selected_field: selected_label,
-                    'reliability': 'Reliability (%)'
-                })
-                st.write(f"Showing {len(joined)} joined stops.")
-                st.dataframe(joined[['Stop Name', 'Route', 'Neighbourhood', selected_label, 'Reliability (%)']], hide_index=True)
+                selected_field = EQUITY_METRIC_OPTIONS[selected_label]
+
+                # Filter out legend boundary rows and missing coordinate entries
+                stops_clean = active_stops_df[active_stops_df['stop_lat'].notna()].copy()
+
+                fig_eq = build_equity_scatter(
+                    stops_clean, equity_gdf, selected_field, selected_label
+                )
+
+                if is_precomputed_fallback:
+                    fig_eq.update_layout(title=f"System-Wide Stop Reliability vs {selected_label} (Precomputed Baseline)")
+                else:
+                    title_info = st.session_state.raw_pipeline_data.get('title_info', 'Custom Analysis')
+                    fig_eq.update_layout(title=f"Analysis Stops vs {selected_label}<br><sub>{title_info}</sub>")
+
+                st.plotly_chart(fig_eq, use_container_width=True, config=PLOTLY_CONFIG, key="chart_equity")
+                announce_sr(f"Equity scatter chart rendered: stop reliability versus {selected_label}.")
+                
+                with st.expander("📋 View data as accessible table", expanded=False):
+                    st.caption(f"Accessible data table for Equity Scatter ({selected_label})")
+                    stops_gdf = gpd.GeoDataFrame(
+                        stops_clean.copy(),
+                        geometry=gpd.points_from_xy(stops_clean['stop_lon'], stops_clean['stop_lat']),
+                        crs=LATLON_PROJ
+                    )
+                    joined = gpd.sjoin(
+                        stops_gdf[['stop_name','route_id','reliability']],
+                        equity_gdf[['area_name', selected_field, 'geometry']],
+                        how='left', predicate='within'
+                    )
+                    joined = joined.dropna(subset=[selected_field, 'reliability']).sort_values('reliability')
+                    joined = joined.rename(columns={
+                        'stop_name': 'Stop Name', 'route_id': 'Route',
+                        'area_name': 'Neighbourhood', selected_field: selected_label,
+                        'reliability': 'Reliability (%)'
+                    })
+                    st.write(f"Showing {len(joined)} matching stops.")
+                    st.dataframe(joined[['Stop Name', 'Route', 'Neighbourhood', selected_label, 'Reliability (%)']], hide_index=True)
 
 with tab_recal:
     has_analysis = st.session_state.analysis_results is not None
