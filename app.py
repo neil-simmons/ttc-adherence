@@ -1487,7 +1487,6 @@ with tab_map:
         "👁️ Map Color Theme",
         options=["Default (Classic Red-Green)", "Accessible (Colorblind-Safe)"],
         key="color_theme",
-        help="Switches the map's reliability color gradient to a high-contrast, colorblind-safe palette. Automatically persists across filter changes."
     )
     
     if not st.session_state.analysis_results:
