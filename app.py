@@ -1455,6 +1455,17 @@ parquet_path = get_parquet_path()
 available_routes = get_available_routes(parquet_path)
 stops, trips, stop_times, shapes = load_gtfs()
 
+if not st.session_state.show_settings:
+    if st.button("⚙️ Open Filter & Analysis Settings", type="primary"):
+        st.session_state.show_settings = True
+        # -------------------------------------------------------------------
+        # Shadow State Restoration Logic (Pushes saved values back to widgets)
+        # -------------------------------------------------------------------
+        if 'saved_ui_state' in st.session_state:
+            for k, v in st.session_state.saved_ui_state.items():
+                st.session_state[k] = v
+        st.rerun()
+        
 if st.session_state.show_settings:
     with st.container():
         st.markdown("### ⚙️ Analysis & Filter Settings")
