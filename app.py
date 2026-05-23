@@ -11,7 +11,8 @@ import json
 import datetime
 import re
 from huggingface_hub import hf_hub_download
-from streamlit_keplergl import keplergl_static
+# Remove: from streamlit_keplergl import keplergl_static
+import streamlit.components.v1 as components
 from keplergl import KeplerGl
 import pyarrow.parquet as pq
 import pyarrow.compute as pc
@@ -499,6 +500,15 @@ def generate_equity_kepler_config():
             "mapStyle": {"styleType": "muted_night"}
         }
     }
+    
+def render_kepler_safely(map_instance, height=600):
+    """Safely renders KeplerGL using native iframes to prevent SessionInfo crashes."""
+    html_data = map_instance._repr_html_()
+    # KeplerGL's _repr_html_ can return bytes in some environments; decode if necessary
+    if isinstance(html_data, bytes):
+        html_data = html_data.decode("utf-8")
+    components.html(html_data, height=height)
+    
 # ==============================================================================
 # 4. MODULARIZED PIPELINE FUNCTIONS
 # ==============================================================================
@@ -1968,7 +1978,7 @@ with tab_map:
             
             # Calls generate_kepler_config dynamically to apply theme changes instantly
             map_instance = KeplerGl(height=600, data={"stops": stops_df, "segments": segments_df}, config=generate_kepler_config())
-            keplergl_static(map_instance, center_map=True)
+            render_kepler_safely(map_instance, height=600)
         else:
             st.info("🗺️ **Map View is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
     else:
@@ -1977,7 +1987,7 @@ with tab_map:
         if 'segments_df' in results and not results['segments_df'].empty:
             # Calls generate_kepler_config dynamically instead of using the static saved version
             map_instance = KeplerGl(height=600, data={"stops": results['stops_df'], "segments": results['segments_df']}, config=generate_kepler_config())
-            keplergl_static(map_instance, center_map=True)
+            render_kepler_safely(map_instance, height=600)
         else:
             st.warning("Spatial geometry could not be built for this route.")
 
@@ -2100,7 +2110,7 @@ with tab_map:
             del tooltip_fields["stops"]
             
     equity_map = KeplerGl(height=650, data=data_dict, config=equity_config)
-    keplergl_static(equity_map, center_map=True)
+    render_kepler_safely(equity_map, height=650)
 
     # -------------------------------------------------------------------------
     # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR CENSUS NEIGHBOURHOOD EQUITY DATA
