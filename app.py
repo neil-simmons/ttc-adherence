@@ -95,6 +95,9 @@ if 'signatures_loaded' not in st.session_state: st.session_state.signatures_load
 if 'signature_list' not in st.session_state: st.session_state.signature_list = []
 if 'trip_start_dict' not in st.session_state: st.session_state.trip_start_dict = {}
 
+# Set color theme defaults in session state
+if 'color_theme' not in st.session_state: st.session_state.color_theme = "Default (Classic Red-Green)"
+
 # ==============================================================================
 # 2. DATA LOADERS
 # ==============================================================================
@@ -264,12 +267,24 @@ def inject_legend_anchors(stops_df, segments_df):
     return s_df, seg_df
 
 def generate_kepler_config():
-    custom_20_colors = [
-        "#DA251D", "#E03920", "#E54E23", "#EB6326", "#F07729", 
-        "#F58C2C", "#FBA02F", "#FFB532", "#FFCA35", "#FFDE38", 
-        "#F2E43B", "#D8DB3D", "#BED240", "#A3C942", "#89C045", 
-        "#6FB747", "#54AE4A", "#3AA54C", "#209C4F", "#1A9641"
-    ]
+    # Dynamic toggle logic for color scheme
+    if st.session_state.get('color_theme', 'Default (Classic Red-Green)') == "Accessible (Colorblind-Safe)":
+        # Colorblind-safe diverging sequential blue-to-yellow palette
+        custom_20_colors = [
+            "#053061", "#1e538d", "#3676b9", "#5298c8", "#78b9d6",
+            "#a4dae8", "#cef1f5", "#ebf7f5", "#fdfae5", "#fef1be",
+            "#fee391", "#fec44f", "#fe9929", "#ec7014", "#cc4c02",
+            "#993404", "#662506", "#4d1a04", "#331102", "#1a0801"
+        ]
+    else:
+        # Original classic TTC red-to-green palette
+        custom_20_colors = [
+            "#DA251D", "#E03920", "#E54E23", "#EB6326", "#F07729", 
+            "#F58C2C", "#FBA02F", "#FFB532", "#FFCA35", "#FFDE38", 
+            "#F2E43B", "#D8DB3D", "#BED240", "#A3C942", "#89C045", 
+            "#6FB747", "#54AE4A", "#3AA54C", "#209C4F", "#1A9641"
+        ]
+        
     color_scale_config = {"name": "TTC_Scale", "type": "custom", "category": "Custom", "colors": custom_20_colors}
     return {
         "version": "v1",
@@ -325,12 +340,20 @@ def generate_kepler_config():
     }
 
 def generate_equity_kepler_config():
-    custom_20_colors = [
-        "#DA251D", "#E03920", "#E54E23", "#EB6326", "#F07729", 
-        "#F58C2C", "#FBA02F", "#FFB532", "#FFCA35", "#FFDE38", 
-        "#F2E43B", "#D8DB3D", "#BED240", "#A3C942", "#89C045", 
-        "#6FB747", "#54AE4A", "#3AA54C", "#209C4F", "#1A9641"
-    ]
+    if st.session_state.get('color_theme', 'Default (Classic Red-Green)') == "Accessible (Colorblind-Safe)":
+        custom_20_colors = [
+            "#053061", "#1e538d", "#3676b9", "#5298c8", "#78b9d6",
+            "#a4dae8", "#cef1f5", "#ebf7f5", "#fdfae5", "#fef1be",
+            "#fee391", "#fec44f", "#fe9929", "#ec7014", "#cc4c02",
+            "#993404", "#662506", "#4d1a04", "#331102", "#1a0801"
+        ]
+    else:
+        custom_20_colors = [
+            "#DA251D", "#E03920", "#E54E23", "#EB6326", "#F07729", 
+            "#F58C2C", "#FBA02F", "#FFB532", "#FFCA35", "#FFDE38", 
+            "#F2E43B", "#D8DB3D", "#BED240", "#A3C942", "#89C045", 
+            "#6FB747", "#54AE4A", "#3AA54C", "#209C4F", "#1A9641"
+        ]
     color_scale_config = {"name": "TTC_Scale", "type": "custom", "category": "Custom", "colors": custom_20_colors}
     
     return {
@@ -1129,7 +1152,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                 'start_stop_idx', 'end_stop_idx', 'window_slider',
                 'time_mode', 'force_t0', 'isolated_trips', 'saved_ui_state',
                 'signatures_loaded', 'signature_list', 'trip_start_dict',
-                'analysis_results', 'raw_pipeline_data'
+                'analysis_results', 'raw_pipeline_data', 'color_theme'
             ]
             for k in keys_to_clear:
                 if k in st.session_state:
@@ -1188,7 +1211,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                     'days_selected', 'time_slider', 'adv_mode', 'multi_routes',
                     'route_selection', 'dir_selection', 'sig_selection',
                     'start_stop_idx', 'end_stop_idx', 'window_slider',
-                    'time_mode', 'force_t0', 'isolated_trips'
+                    'time_mode', 'force_t0', 'isolated_trips', 'color_theme'
                 ]
                 st.session_state.saved_ui_state = {k: st.session_state[k] for k in keys_to_save if k in st.session_state}
                 st.session_state.show_settings = False
@@ -1432,16 +1455,29 @@ parquet_path = get_parquet_path()
 available_routes = get_available_routes(parquet_path)
 stops, trips, stop_times, shapes = load_gtfs()
 
-if not st.session_state.show_settings:
-    if st.button("⚙️ Open Filter & Analysis Settings", type="primary"):
-        st.session_state.show_settings = True
-        # -------------------------------------------------------------------
-        # Shadow State Restoration Logic (Pushes saved values back to widgets)
-        # -------------------------------------------------------------------
-        if 'saved_ui_state' in st.session_state:
-            for k, v in st.session_state.saved_ui_state.items():
-                st.session_state[k] = v
-        st.rerun()
+# Additive persistent header layout for settings and accessibility controls
+col_settings_btn, col_accessibility_theme = st.columns([3, 1])
+
+with col_settings_btn:
+    if not st.session_state.show_settings:
+        if st.button("⚙️ Open Filter & Analysis Settings", type="primary", use_container_width=True):
+            st.session_state.show_settings = True
+            # -------------------------------------------------------------------
+            # Shadow State Restoration Logic (Pushes saved values back to widgets)
+            # -------------------------------------------------------------------
+            if 'saved_ui_state' in st.session_state:
+                for k, v in st.session_state.saved_ui_state.items():
+                    st.session_state[k] = v
+            st.rerun()
+
+with col_accessibility_theme:
+    # Persistent color theme control placed highly visible at the top of the page
+    st.selectbox(
+        "👁️ Display Theme",
+        options=["Default (Classic Red-Green)", "Accessible (Colorblind-Safe)"],
+        key="color_theme",
+        help="Switches color gradients on maps and charts to a high-contrast, colorblind-safe palette."
+    )
 
 if st.session_state.show_settings:
     with st.container():
@@ -1602,6 +1638,38 @@ with tab_map:
             
     equity_map = KeplerGl(height=650, data=data_dict, config=equity_config)
     keplergl_static(equity_map, center_map=True)
+
+    # -------------------------------------------------------------------------
+    # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR CENSUS NEIGHBOURHOOD EQUITY DATA
+    # -------------------------------------------------------------------------
+    if equity_gdf is not None and not equity_gdf.empty:
+        st.markdown("<br>", unsafe_allow_html=True)
+        with st.expander("🏘️ View Neighbourhood Census Equity Metrics as an Accessible Table", expanded=False):
+            st.caption("This collapsible database lists Statistics Canada 2021 Census equity indicators across municipal neighbourhoods, serving as an accessible high-contrast text alternative to the multi-layered visual map above.")
+            
+            display_equity = pd.DataFrame(equity_gdf).copy()
+            if 'geometry' in display_equity.columns:
+                display_equity = display_equity.drop(columns=['geometry'])
+            
+            display_equity = display_equity.sort_values('area_name')
+            st.dataframe(
+                display_equity[[
+                    'area_name', 'median_income', 'low_income_pct', 
+                    'transit_commute_pct', 'visible_minority_pct', 
+                    'recent_immigrant_pct', 'senior_pct'
+                ]],
+                column_config={
+                    'area_name': st.column_config.TextColumn("Neighbourhood Name"),
+                    'median_income': st.column_config.NumberColumn("Median Household Income", format="$%d"),
+                    'low_income_pct': st.column_config.NumberColumn("Low-Income Households", format="%.1f%%"),
+                    'transit_commute_pct': st.column_config.NumberColumn("Transit Commute share", format="%.1f%%"),
+                    'visible_minority_pct': st.column_config.NumberColumn("Visible Minority Share", format="%.1f%%"),
+                    'recent_immigrant_pct': st.column_config.NumberColumn("Recent Immigrants (Last 5 Yrs)", format="%.1f%%"),
+                    'senior_pct': st.column_config.NumberColumn("Seniors 65+", format="%.1f%%")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
     
     st.caption("Data: Statistics Canada 2021 Census via City of Toronto Neighbourhood Profiles (open.toronto.ca). All data used under open government licence.")
 
