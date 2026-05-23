@@ -68,7 +68,7 @@ END_DATE      = '2026-05-02 23:59:59'
 STAT_HOLIDAYS = ['2026-04-03']
 
 MAX_TRACK_DEVIATION_M   = 150
-MAX_ALLOWED_PING_GAP_SEC = 120
+MAX_ALLOWED_PING_GAP_SEC = 60
 UTM_PROJ   = "EPSG:32617"
 LATLON_PROJ = "EPSG:4326"
 
@@ -593,7 +593,7 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
         # 3. Calculate the actual time gap (in seconds) between the two bounding pings
         gaps = ping_times[idx_after] - ping_times[idx_after - 1]
         
-        # 4. Nullify the interpolation if the gap exceeds the 120-second threshold
+        # 4. Nullify the interpolation if the gap exceeds the 60-second threshold
         interpolated_times = np.where(gaps > MAX_ALLOWED_PING_GAP_SEC, np.nan, interpolated_times)
         # ------------------------------------
 
