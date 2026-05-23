@@ -2201,351 +2201,355 @@ with tab_analytics:
     trip_stats   = (st.session_state.raw_pipeline_data.get('trip_stats')
                     if has_analysis and st.session_state.raw_pipeline_data else None)
 
-    if not has_analysis:
+    # Attempt to load data for the Equity chart (Custom Analysis OR Precomputed Network)
+    active_equity_stops = None
+    if has_analysis:
+        active_equity_stops = st.session_state.analysis_results['stops_df']
+    else:
+        pre_network = load_precomputed_network()
+        if pre_network:
+            active_equity_stops = pd.DataFrame(pre_network['stops'])
+
+    # ── SECTION 1: TEMPORAL PATTERNS ──────────────────────────────────────
+    st.markdown("### ⏱️ Temporal Patterns")
+    
+    if not has_analysis or is_multi or trip_stats is None:
         st.info(
-            "📈 **No analysis loaded.** Use the **⚙️ Open Filter & Analysis Settings** "
-            "button above to configure and run an analysis. Once complete, this tab "
-            "will display temporal patterns, space-time heatmaps, and equity comparisons."
+            "⏱️ **Temporal pattern charts are available for single-route analyses "
+            "only.** Switch to single-route mode in the settings panel above and "
+            "re-run the analysis to access day-of-week, date trend, and departure-"
+            "time breakdowns."
         )
     else:
-        # ── SECTION 1: TEMPORAL PATTERNS ──────────────────────────────────────
-        st.markdown("### ⏱️ Temporal Patterns")
+        show_dow      = trip_stats['n_unique_dow'] >= 3
+        show_date     = trip_stats['n_unique_dates'] >= 7
+        show_dep_time = trip_stats['hour_range'] >= 0.5   # 30 minutes minimum
         
-        if is_multi or trip_stats is None:
+        any_temporal  = show_dow or show_date or show_dep_time
+        
+        if not any_temporal:
             st.info(
-                "⏱️ **Temporal pattern charts are available for single-route analyses "
-                "only.** Switch to single-route mode in the settings panel above and "
-                "re-run the analysis to access day-of-week, date trend, and departure-"
-                "time breakdowns."
+                "⏱️ **Temporal charts require more data variation than is present in "
+                "this analysis.** Specifically: day-of-week distribution needs data "
+                "from at least 3 distinct days of the week; date trend needs at least "
+                "7 different operating dates; departure-time scatter needs at least "
+                "30 minutes of variation in trip departure times. Broaden your day "
+                "or time-window filters and re-run to enable these charts."
             )
         else:
-            show_dow      = trip_stats['n_unique_dow'] >= 3
-            show_date     = trip_stats['n_unique_dates'] >= 7
-            show_dep_time = trip_stats['hour_range'] >= 0.5   # 30 minutes minimum
-            
-            any_temporal  = show_dow or show_date or show_dep_time
-            
-            if not any_temporal:
-                st.info(
-                    "⏱️ **Temporal charts require more data variation than is present in "
-                    "this analysis.** Specifically: day-of-week distribution needs data "
-                    "from at least 3 distinct days of the week; date trend needs at least "
-                    "7 different operating dates; departure-time scatter needs at least "
-                    "30 minutes of variation in trip departure times. Broaden your day "
-                    "or time-window filters and re-run to enable these charts."
-                )
-            else:
-                if 'show_temporal' not in st.session_state:
-                    st.session_state.show_temporal = False
-                if st.button("Generate Temporal Charts", key="btn_temporal",
-                             help="Computes day-of-week, date trend, and departure-time charts."):
-                    st.session_state.show_temporal = True
+            if 'show_temporal' not in st.session_state:
+                st.session_state.show_temporal = False
+            if st.button("Generate Temporal Charts", key="btn_temporal",
+                         help="Computes day-of-week, date trend, and departure-time charts."):
+                st.session_state.show_temporal = True
 
-                if st.session_state.get('show_temporal'):
-                    if show_dow:
-                        st.markdown("#### Delay by Day of Week")
-                        st.caption(
-                            "Each box shows the distribution of per-trip mean delays for that "
-                            "day. The horizontal dashed line marks the scheduled baseline (zero "
-                            "delay). Outlier points are shown individually."
-                        )
-                        fig = build_dow_chart(trip_stats)
-                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_dow")
-                        announce_sr("Day-of-week delay distribution chart rendered.")
-                        
-                        with st.expander("📋 View data as accessible table", expanded=False):
-                            st.caption("Accessible data table for Per-Trip Mean Delay by Day of Week")
-                            data = []
-                            for d in range(7):
-                                delays = [trip_stats['per_trip_mean_delay'][i]/60 for i, dow in enumerate(trip_stats['per_trip_dow']) if dow == d and not np.isnan(trip_stats['per_trip_mean_delay'][i])]
-                                if len(delays) >= 3:
-                                    data.append({
-                                        "Day": DOW_LABELS[d], "N Trips": len(delays),
-                                        "Median Delay (min)": np.median(delays),
-                                        "Min (min)": np.min(delays), "Max (min)": np.max(delays)
-                                    })
-                            st.dataframe(pd.DataFrame(data), hide_index=True)
-                    else:
-                        st.info(
-                            "**Day-of-week chart unavailable.** This chart requires data from "
-                            "at least 3 distinct days of the week. Your current analysis "
-                            "covers fewer — expand the day filters in the settings panel."
-                        )
-
-                    st.markdown("---")
-
-                    if show_date:
-                        st.markdown("#### Daily Mean Delay Over Time")
-                        st.caption(
-                            "Each point represents the mean per-trip delay across all trips "
-                            "on that operating date. The dotted blue line shows a 7-day rolling "
-                            "average when sufficient dates are available."
-                        )
-                        fig = build_date_trend_chart(trip_stats)
-                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_date")
-                        announce_sr("Date trend chart rendered.")
-                        
-                        with st.expander("📋 View data as accessible table", expanded=False):
-                            st.caption("Accessible data table for Daily Mean Delay Over Time")
-                            date_dict = {}
-                            for d, delay in zip(trip_stats['per_trip_date'], trip_stats['per_trip_mean_delay']):
-                                if d and not np.isnan(delay):
-                                    date_dict.setdefault(d, []).append(delay/60)
-                            data = [{"Date": d, "N Trips": len(date_dict[d]), "Mean Delay (min)": np.mean(date_dict[d])} for d in sorted(date_dict.keys())]
-                            st.dataframe(pd.DataFrame(data), hide_index=True)
-                    else:
-                        st.info(
-                            "**Date trend chart unavailable.** This chart requires at least "
-                            "7 different operating dates. Your current analysis spans fewer. "
-                            "Broaden the date range of your underlying dataset to enable this."
-                        )
-
-                    st.markdown("---")
-
-                    if show_dep_time:
-                        st.markdown("#### Delay vs Trip Departure Hour")
-                        st.caption(
-                            "Each point represents one trip. The x-axis shows the approximate "
-                            "hour at which the trip departed its origin stop. The dotted trend "
-                            "line indicates the overall directional relationship."
-                        )
-                        fig = build_departure_scatter(trip_stats)
-                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_dep")
-                        announce_sr("Departure-time scatter chart rendered.")
-                        
-                        with st.expander("📋 View data as accessible table", expanded=False):
-                            st.caption("Accessible data table for Delay vs Trip Departure Hour")
-                            data = []
-                            for h, d, dt in zip(trip_stats['per_trip_hour'], trip_stats['per_trip_mean_delay'], trip_stats['per_trip_date']):
-                                if h is not None and not np.isnan(d):
-                                    data.append({"Departure Hour": round(h, 1), "Date": dt, "Mean Delay (min)": d/60})
-                            if data:
-                                df_dep = pd.DataFrame(data).sort_values("Departure Hour")
-                                st.dataframe(df_dep, hide_index=True)
-                    else:
-                        st.info(
-                            "**Departure-time scatter unavailable.** This chart requires at "
-                            "least 30 minutes of variation in trip departure times across the "
-                            "analyzed sample. All trips in this signature depart within a "
-                            "narrower window — consider analyzing a broader time range."
-                        )
-
-        st.markdown("---")
-
-        # ── SECTION 2: SPACE-TIME STRUCTURE ───────────────────────────────────
-        st.markdown("### 🗂️ Space-Time Structure")
-
-        if is_multi or trip_stats is None:
-            st.info(
-                "🗂️ **Space-time structure charts are available for single-route "
-                "analyses only.** Re-run in single-route mode to access delay "
-                "variability and heatmap breakdowns."
-            )
-        else:
-            show_time_hm = trip_stats['hour_range'] >= 0.5 and not is_multi
-            show_dow_hm  = trip_stats['n_unique_dow'] >= 3 and not is_multi
-
-            if 'show_spacetime' not in st.session_state:
-                st.session_state.show_spacetime = False
-            if st.button("Generate Space-Time Charts", key="btn_spacetime",
-                         help="Computes delay variability and heatmap breakdowns."):
-                st.session_state.show_spacetime = True
-
-            if st.session_state.get('show_spacetime'):
-
-                st.markdown("#### Delay Distribution by Stop (Box-and-Whisker)")
-                st.caption(
-                    "Shows the full distribution of arrival delay (relative to schedule) "
-                    "at each stop in route order. Boxes represent the interquartile range; "
-                    "whiskers extend to 1.5× IQR; outlier points are shown individually. "
-                    "The dashed line at zero marks the scheduled arrival time."
-                )
-                fig = build_delay_variance_chart(trip_stats)
-                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_variance")
-                announce_sr("Stop delay distribution box plot rendered.")
-                
-                with st.expander("📋 View data as accessible table", expanded=False):
-                    st.caption("Accessible data table for Delay Distribution by Stop")
-                    data = []
-                    for sid in trip_stats['stop_order']:
-                        if sid in trip_stats['per_stop_delays'] and len(trip_stats['per_stop_delays'][sid]) >= 2:
-                            delays = [d/60 for d in trip_stats['per_stop_delays'][sid]]
-                            data.append({
-                                "Stop": trip_stats['stop_names'][sid],
-                                "N Observations": len(delays),
-                                "Median Delay (min)": np.median(delays),
-                                "Std Dev (min)": np.std(delays),
-                                "Min (min)": np.min(delays),
-                                "Max (min)": np.max(delays)
-                            })
-                    st.dataframe(pd.DataFrame(data), hide_index=True)
-
-                st.markdown("---")
-
-                if show_time_hm:
-                    st.markdown("#### Mean Delay — Stop × Time of Day")
+            if st.session_state.get('show_temporal'):
+                if show_dow:
+                    st.markdown("#### Delay by Day of Week")
                     st.caption(
-                        "Each cell shows the mean arrival delay (minutes) at that stop "
-                        "during that time period. Red indicates late arrivals; blue indicates "
-                        "early arrivals; white indicates on-time performance. Grey cells have "
-                        "fewer than 2 observations and are shown as not-a-number."
+                        "Each box shows the distribution of per-trip mean delays for that "
+                        "day. The horizontal dashed line marks the scheduled baseline (zero "
+                        "delay). Outlier points are shown individually."
                     )
-                    fig = build_stop_time_heatmap(trip_stats)
-                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_time_hm")
-                    announce_sr("Stop by time-of-day delay heatmap rendered.")
+                    fig = build_dow_chart(trip_stats)
+                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_dow")
+                    announce_sr("Day-of-week delay distribution chart rendered.")
                     
                     with st.expander("📋 View data as accessible table", expanded=False):
-                        st.caption("Accessible data table for Mean Delay by Stop and Time of Day")
-                        buckets = {b[0]: [] for b in TIME_BUCKETS}
-                        for line in trip_stats['mode_b_lines']:
-                            anc = line.get('anchor_sec')
-                            if anc is None: continue
-                            hour = (float(anc) % 86400.0) / 3600.0
-                            for name, s, e in TIME_BUCKETS:
-                                if s <= hour < e:
-                                    buckets[name].append(line)
-                                    break
-                        used_buckets = [name for name, _, _ in TIME_BUCKETS if len(buckets[name]) >= 3]
-                        df_data = {}
-                        for b_name in used_buckets:
-                            row_data = {}
-                            for sid in trip_stats['stop_order']:
-                                stop_name = trip_stats['stop_names'][sid]
-                                delays = []
-                                for line in buckets[b_name]:
-                                    sd = line.get('stop_delays', {})
-                                    if sid in sd and sid in trip_stats['rel_sec_map']:
-                                        delays.append((sd[sid] - trip_stats['rel_sec_map'][sid])/60)
-                                row_data[clean_stop_name(stop_name)] = round(np.mean(delays), 1) if len(delays) >= 2 else np.nan
-                            df_data[b_name] = row_data
-                        df_table = pd.DataFrame.from_dict(df_data, orient='index')
-                        st.dataframe(df_table)
+                        st.caption("Accessible data table for Per-Trip Mean Delay by Day of Week")
+                        data = []
+                        for d in range(7):
+                            delays = [trip_stats['per_trip_mean_delay'][i]/60 for i, dow in enumerate(trip_stats['per_trip_dow']) if dow == d and not np.isnan(trip_stats['per_trip_mean_delay'][i])]
+                            if len(delays) >= 3:
+                                data.append({
+                                    "Day": DOW_LABELS[d], "N Trips": len(delays),
+                                    "Median Delay (min)": np.median(delays),
+                                    "Min (min)": np.min(delays), "Max (min)": np.max(delays)
+                                })
+                        st.dataframe(pd.DataFrame(data), hide_index=True)
                 else:
                     st.info(
-                        "**Stop × time-of-day heatmap unavailable.** This chart requires "
-                        "at least 30 minutes of variation in trip departure times across the "
-                        "analyzed sample. The current analysis window is too narrow to reveal "
-                        "meaningful time-of-day patterns. Broaden the time filter to enable."
+                        "**Day-of-week chart unavailable.** This chart requires data from "
+                        "at least 3 distinct days of the week. Your current analysis "
+                        "covers fewer — expand the day filters in the settings panel."
                     )
 
                 st.markdown("---")
 
-                if show_dow_hm:
-                    st.markdown("#### Mean Delay — Stop × Day of Week")
+                if show_date:
+                    st.markdown("#### Daily Mean Delay Over Time")
                     st.caption(
-                        "Each cell shows the mean arrival delay at that stop on that day "
-                        "of the week. Same colour encoding as the time-of-day heatmap above."
+                        "Each point represents the mean per-trip delay across all trips "
+                        "on that operating date. The dotted blue line shows a 7-day rolling "
+                        "average when sufficient dates are available."
                     )
-                    fig = build_stop_dow_heatmap(trip_stats)
-                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_dow_hm")
-                    announce_sr("Stop by day-of-week delay heatmap rendered.")
+                    fig = build_date_trend_chart(trip_stats)
+                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_date")
+                    announce_sr("Date trend chart rendered.")
                     
                     with st.expander("📋 View data as accessible table", expanded=False):
-                        st.caption("Accessible data table for Mean Delay by Stop and Day of Week")
-                        dow_dict = {d: [] for d in range(7)}
-                        for i, d in enumerate(trip_stats['per_trip_dow']):
-                            if d is not None:
-                                dow_dict[d].append(trip_stats['mode_b_lines'][i])
-                        used_dows = [d for d in range(7) if len(dow_dict[d]) >= 3]
-                        df_data = {}
-                        for d in used_dows:
-                            row_data = {}
-                            for sid in trip_stats['stop_order']:
-                                stop_name = trip_stats['stop_names'][sid]
-                                delays = []
-                                for line in dow_dict[d]:
-                                    sd = line.get('stop_delays', {})
-                                    if sid in sd and sid in trip_stats['rel_sec_map']:
-                                        delays.append((sd[sid] - trip_stats['rel_sec_map'][sid])/60)
-                                row_data[clean_stop_name(stop_name)] = round(np.mean(delays), 1) if len(delays) >= 2 else np.nan
-                            df_data[DOW_LABELS[d]] = row_data
-                        df_table = pd.DataFrame.from_dict(df_data, orient='index')
-                        st.dataframe(df_table)
+                        st.caption("Accessible data table for Daily Mean Delay Over Time")
+                        date_dict = {}
+                        for d, delay in zip(trip_stats['per_trip_date'], trip_stats['per_trip_mean_delay']):
+                            if d and not np.isnan(delay):
+                                date_dict.setdefault(d, []).append(delay/60)
+                        data = [{"Date": d, "N Trips": len(date_dict[d]), "Mean Delay (min)": np.mean(date_dict[d])} for d in sorted(date_dict.keys())]
+                        st.dataframe(pd.DataFrame(data), hide_index=True)
                 else:
                     st.info(
-                        "**Stop × day-of-week heatmap unavailable.** This chart requires "
-                        "data from at least 3 distinct days of the week. Expand the day "
-                        "filters in the settings panel and re-run to enable."
+                        "**Date trend chart unavailable.** This chart requires at least "
+                        "7 different operating dates. Your current analysis spans fewer. "
+                        "Broaden the date range of your underlying dataset to enable this."
                     )
 
-        st.markdown("---")
+                st.markdown("---")
 
-        # ── SECTION 3: EQUITY ─────────────────────────────────────────────────
-        st.markdown("### 🏘️ Equity Analysis")
+                if show_dep_time:
+                    st.markdown("#### Delay vs Trip Departure Hour")
+                    st.caption(
+                        "Each point represents one trip. The x-axis shows the approximate "
+                        "hour at which the trip departed its origin stop. The dotted trend "
+                        "line indicates the overall directional relationship."
+                    )
+                    fig = build_departure_scatter(trip_stats)
+                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_dep")
+                    announce_sr("Departure-time scatter chart rendered.")
+                    
+                    with st.expander("📋 View data as accessible table", expanded=False):
+                        st.caption("Accessible data table for Delay vs Trip Departure Hour")
+                        data = []
+                        for h, d, dt in zip(trip_stats['per_trip_hour'], trip_stats['per_trip_mean_delay'], trip_stats['per_trip_date']):
+                            if h is not None and not np.isnan(d):
+                                data.append({"Departure Hour": round(h, 1), "Date": dt, "Mean Delay (min)": d/60})
+                        if data:
+                            df_dep = pd.DataFrame(data).sort_values("Departure Hour")
+                            st.dataframe(df_dep, hide_index=True)
+                else:
+                    st.info(
+                        "**Departure-time scatter unavailable.** This chart requires at "
+                        "least 30 minutes of variation in trip departure times across the "
+                        "analyzed sample. All trips in this signature depart within a "
+                        "narrower window — consider analyzing a broader time range."
+                    )
 
-        try:
-            equity_gdf     = load_equity_data()
-            equity_available = (equity_gdf is not None and not equity_gdf.empty)
-        except Exception:
-            equity_available = False
+    st.markdown("---")
 
-        if not equity_available:
-            st.info(
-                "🏘️ **Equity data is not available.** Upload "
-                "`equity_neighbourhoods.geojson` to the HuggingFace repository "
-                "to enable this section. See the Route Reliability Map tab for "
-                "upload instructions."
-            )
-        elif not has_analysis:
-            st.info(
-                "🏘️ **Run an analysis first** to enable the equity scatter chart."
-            )
-        else:
-            EQUITY_METRIC_OPTIONS = {
-                "Median Household Income ($)":          "median_income",
-                "Low-Income Households (%)":            "low_income_pct",
-                "Transit Commuters (%)":                "transit_commute_pct",
-                "Visible Minority Population (%)":      "visible_minority_pct",
-                "Recent Immigrants — Last 5 Yrs (%)":   "recent_immigrant_pct",
-                "Seniors 65+ (%)":                      "senior_pct",
-            }
+    # ── SECTION 2: SPACE-TIME STRUCTURE ───────────────────────────────────
+    st.markdown("### 🗂️ Space-Time Structure")
 
+    if not has_analysis or is_multi or trip_stats is None:
+        st.info(
+            "🗂️ **Space-time structure charts are available for single-route "
+            "analyses only.** Re-run in single-route mode to access delay "
+            "variability and heatmap breakdowns."
+        )
+    else:
+        show_time_hm = trip_stats['hour_range'] >= 0.5 and not is_multi
+        show_dow_hm  = trip_stats['n_unique_dow'] >= 3 and not is_multi
+
+        if 'show_spacetime' not in st.session_state:
+            st.session_state.show_spacetime = False
+        if st.button("Generate Space-Time Charts", key="btn_spacetime",
+                     help="Computes delay variability and heatmap breakdowns."):
+            st.session_state.show_spacetime = True
+
+        if st.session_state.get('show_spacetime'):
+
+            st.markdown("#### Delay Distribution by Stop (Box-and-Whisker)")
             st.caption(
-                "Each dot represents one stop, plotted against the equity indicator "
-                "for the neighbourhood it falls within. Dots are colour-coded and "
-                "shape-coded by route — both visual channels are used so the chart "
-                "remains readable for users with colour vision differences."
+                "Shows the full distribution of arrival delay (relative to schedule) "
+                "at each stop in route order. Boxes represent the interquartile range; "
+                "whiskers extend to 1.5× IQR; outlier points are shown individually. "
+                "The dashed line at zero marks the scheduled arrival time."
             )
-
-            selected_label = st.selectbox(
-                "Equity metric to compare against stop reliability:",
-                options = list(EQUITY_METRIC_OPTIONS.keys()),
-                key     = "equity_metric_select"
-            )
-            selected_field = EQUITY_METRIC_OPTIONS[selected_label]
-
-            stops_clean = st.session_state.analysis_results['stops_df']
-            stops_clean = stops_clean[stops_clean['stop_lat'].notna()].copy()
-
-            fig_eq = build_equity_scatter(
-                stops_clean, equity_gdf, selected_field, selected_label
-            )
-            st.plotly_chart(fig_eq, use_container_width=True, config=PLOTLY_CONFIG, key="chart_equity")
-            announce_sr(
-                f"Equity scatter chart rendered: stop reliability versus "
-                f"{selected_label}."
-            )
+            fig = build_delay_variance_chart(trip_stats)
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_variance")
+            announce_sr("Stop delay distribution box plot rendered.")
             
             with st.expander("📋 View data as accessible table", expanded=False):
-                st.caption(f"Accessible data table for Equity Scatter ({selected_label})")
-                stops_gdf = gpd.GeoDataFrame(
-                    stops_clean.copy(),
-                    geometry=gpd.points_from_xy(stops_clean['stop_lon'], stops_clean['stop_lat']),
-                    crs=LATLON_PROJ
+                st.caption("Accessible data table for Delay Distribution by Stop")
+                data = []
+                for sid in trip_stats['stop_order']:
+                    if sid in trip_stats['per_stop_delays'] and len(trip_stats['per_stop_delays'][sid]) >= 2:
+                        delays = [d/60 for d in trip_stats['per_stop_delays'][sid]]
+                        data.append({
+                            "Stop": trip_stats['stop_names'][sid],
+                            "N Observations": len(delays),
+                            "Median Delay (min)": np.median(delays),
+                            "Std Dev (min)": np.std(delays),
+                            "Min (min)": np.min(delays),
+                            "Max (min)": np.max(delays)
+                        })
+                st.dataframe(pd.DataFrame(data), hide_index=True)
+
+            st.markdown("---")
+
+            if show_time_hm:
+                st.markdown("#### Mean Delay — Stop × Time of Day")
+                st.caption(
+                    "Each cell shows the mean arrival delay (minutes) at that stop "
+                    "during that time period. Red indicates late arrivals; blue indicates "
+                    "early arrivals; white indicates on-time performance. Grey cells have "
+                    "fewer than 2 observations and are shown as not-a-number."
                 )
-                joined = gpd.sjoin(
-                    stops_gdf[['stop_name','route_id','reliability','geometry']],
-                    equity_gdf[['area_name', selected_field, 'geometry']],
-                    how='left', predicate='within'
+                fig = build_stop_time_heatmap(trip_stats)
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_time_hm")
+                announce_sr("Stop by time-of-day delay heatmap rendered.")
+                
+                with st.expander("📋 View data as accessible table", expanded=False):
+                    st.caption("Accessible data table for Mean Delay by Stop and Time of Day")
+                    buckets = {b[0]: [] for b in TIME_BUCKETS}
+                    for line in trip_stats['mode_b_lines']:
+                        anc = line.get('anchor_sec')
+                        if anc is None: continue
+                        hour = (float(anc) % 86400.0) / 3600.0
+                        for name, s, e in TIME_BUCKETS:
+                            if s <= hour < e:
+                                buckets[name].append(line)
+                                break
+                    used_buckets = [name for name, _, _ in TIME_BUCKETS if len(buckets[name]) >= 3]
+                    df_data = {}
+                    for b_name in used_buckets:
+                        row_data = {}
+                        for sid in trip_stats['stop_order']:
+                            stop_name = trip_stats['stop_names'][sid]
+                            delays = []
+                            for line in buckets[b_name]:
+                                sd = line.get('stop_delays', {})
+                                if sid in sd and sid in trip_stats['rel_sec_map']:
+                                    delays.append((sd[sid] - trip_stats['rel_sec_map'][sid])/60)
+                            row_data[clean_stop_name(stop_name)] = round(np.mean(delays), 1) if len(delays) >= 2 else np.nan
+                        df_data[b_name] = row_data
+                    df_table = pd.DataFrame.from_dict(df_data, orient='index')
+                    st.dataframe(df_table)
+            else:
+                st.info(
+                    "**Stop × time-of-day heatmap unavailable.** This chart requires "
+                    "at least 30 minutes of variation in trip departure times across the "
+                    "analyzed sample. The current analysis window is too narrow to reveal "
+                    "meaningful time-of-day patterns. Broaden the time filter to enable."
                 )
-                joined = joined.dropna(subset=[selected_field, 'reliability']).sort_values('reliability')
-                joined = joined.rename(columns={
-                    'stop_name': 'Stop Name', 'route_id': 'Route',
-                    'area_name': 'Neighbourhood', selected_field: selected_label,
-                    'reliability': 'Reliability (%)'
-                })
-                st.write(f"Showing {len(joined)} joined stops.")
-                st.dataframe(joined[['Stop Name', 'Route', 'Neighbourhood', selected_label, 'Reliability (%)']], hide_index=True)
+
+            st.markdown("---")
+
+            if show_dow_hm:
+                st.markdown("#### Mean Delay — Stop × Day of Week")
+                st.caption(
+                    "Each cell shows the mean arrival delay at that stop on that day "
+                    "of the week. Same colour encoding as the time-of-day heatmap above."
+                )
+                fig = build_stop_dow_heatmap(trip_stats)
+                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_dow_hm")
+                announce_sr("Stop by day-of-week delay heatmap rendered.")
+                
+                with st.expander("📋 View data as accessible table", expanded=False):
+                    st.caption("Accessible data table for Mean Delay by Stop and Day of Week")
+                    dow_dict = {d: [] for d in range(7)}
+                    for i, d in enumerate(trip_stats['per_trip_dow']):
+                        if d is not None:
+                            dow_dict[d].append(trip_stats['mode_b_lines'][i])
+                    used_dows = [d for d in range(7) if len(dow_dict[d]) >= 3]
+                    df_data = {}
+                    for d in used_dows:
+                        row_data = {}
+                        for sid in trip_stats['stop_order']:
+                            stop_name = trip_stats['stop_names'][sid]
+                            delays = []
+                            for line in dow_dict[d]:
+                                sd = line.get('stop_delays', {})
+                                if sid in sd and sid in trip_stats['rel_sec_map']:
+                                    delays.append((sd[sid] - trip_stats['rel_sec_map'][sid])/60)
+                            row_data[clean_stop_name(stop_name)] = round(np.mean(delays), 1) if len(delays) >= 2 else np.nan
+                        df_data[DOW_LABELS[d]] = row_data
+                    df_table = pd.DataFrame.from_dict(df_data, orient='index')
+                    st.dataframe(df_table)
+            else:
+                st.info(
+                    "**Stop × day-of-week heatmap unavailable.** This chart requires "
+                    "data from at least 3 distinct days of the week. Expand the day "
+                    "filters in the settings panel and re-run to enable."
+                )
+
+    st.markdown("---")
+
+    # ── SECTION 3: EQUITY ─────────────────────────────────────────────────
+    st.markdown("### 🏘️ Equity Analysis")
+
+    try:
+        equity_gdf     = load_equity_data()
+        equity_available = (equity_gdf is not None and not equity_gdf.empty)
+    except Exception:
+        equity_available = False
+
+    if not equity_available:
+        st.info(
+            "🏘️ **Equity data is not available.** Upload "
+            "`equity_neighbourhoods.geojson` to the HuggingFace repository "
+            "to enable this section. See the Route Reliability Map tab for "
+            "upload instructions."
+        )
+    elif active_equity_stops is None:
+        st.info(
+            "🏘️ **No reliability data available.** Run an analysis or allow the default network to load to enable the equity scatter chart."
+        )
+    else:
+        if not has_analysis:
+            st.info("📈 **Showing Network-Wide Equity Analysis.** This view uses precomputed reliability data for the entire streetcar network. For detailed Temporal and Space-Time charts, please run a custom analysis for a specific route.")
+        
+        EQUITY_METRIC_OPTIONS = {
+            "Median Household Income ($)":          "median_income",
+            "Low-Income Households (%)":            "low_income_pct",
+            "Transit Commuters (%)":                "transit_commute_pct",
+            "Visible Minority Population (%)":      "visible_minority_pct",
+            "Recent Immigrants — Last 5 Yrs (%)":   "recent_immigrant_pct",
+            "Seniors 65+ (%)":                      "senior_pct",
+        }
+
+        st.caption(
+            "Each dot represents one stop, plotted against the equity indicator "
+            "for the neighbourhood it falls within. Dots are colour-coded and "
+            "shape-coded by route — both visual channels are used so the chart "
+            "remains readable for users with colour vision differences."
+        )
+
+        selected_label = st.selectbox(
+            "Equity metric to compare against stop reliability:",
+            options = list(EQUITY_METRIC_OPTIONS.keys()),
+            key     = "equity_metric_select"
+        )
+        selected_field = EQUITY_METRIC_OPTIONS[selected_label]
+
+        stops_clean = active_equity_stops[active_equity_stops['stop_lat'].notna()].copy()
+
+        fig_eq = build_equity_scatter(
+            stops_clean, equity_gdf, selected_field, selected_label
+        )
+        st.plotly_chart(fig_eq, use_container_width=True, config=PLOTLY_CONFIG, key="chart_equity")
+        announce_sr(
+            f"Equity scatter chart rendered: stop reliability versus "
+            f"{selected_label}."
+        )
+        
+        with st.expander("📋 View data as accessible table", expanded=False):
+            st.caption(f"Accessible data table for Equity Scatter ({selected_label})")
+            stops_gdf = gpd.GeoDataFrame(
+                stops_clean.copy(),
+                geometry=gpd.points_from_xy(stops_clean['stop_lon'], stops_clean['stop_lat']),
+                crs=LATLON_PROJ
+            )
+            joined = gpd.sjoin(
+                stops_gdf[['stop_name','route_id','reliability','geometry']],
+                equity_gdf[['area_name', selected_field, 'geometry']],
+                how='left', predicate='within'
+            )
+            joined = joined.dropna(subset=[selected_field, 'reliability']).sort_values('reliability')
+            joined = joined.rename(columns={
+                'stop_name': 'Stop Name', 'route_id': 'Route',
+                'area_name': 'Neighbourhood', selected_field: selected_label,
+                'reliability': 'Reliability (%)'
+            })
+            st.write(f"Showing {len(joined)} joined stops.")
+            st.dataframe(joined[['Stop Name', 'Route', 'Neighbourhood', selected_label, 'Reliability (%)']], hide_index=True)
 
 with tab_recal:
     has_analysis = st.session_state.analysis_results is not None
