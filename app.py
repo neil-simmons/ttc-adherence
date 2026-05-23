@@ -1737,12 +1737,17 @@ def build_equity_scatter(stops_df, equity_gdf, equity_field, metric_label):
 
     for i, route in enumerate(unique_routes):
         color = WCAG_ROUTE_COLORS[i % len(WCAG_ROUTE_COLORS)]
-        shape = WCAG_ROUTE_SHAPES[i % len(WCAG_ROUTE_SHAPES)]
         route_data = joined[joined['route_id'].astype(str) == route]
         fig.add_trace(go.Scatter(
             x=route_data[equity_field], y=route_data['reliability'],
             mode='markers', name=f"Route {route}",
-            marker=dict(size=12, color=color, symbol=shape, opacity=0.80, line=dict(width=1.0, color='#FFFFFF')),
+            marker=dict(
+                size=12, 
+                color=color, 
+                symbol="circle",  # Changed all point shapes to standard circles
+                opacity=0.80, 
+                line=dict(width=1.0, color='#FFFFFF')
+            ),
             text=route_data['stop_name'] + ' — ' + route_data['area_name'].fillna('Outside boundary'),
             hovertemplate="%{text}<br>" + metric_label + ": %{x:.1f}<br>Reliability: %{y:.1f}%<extra></extra>"
         ))
@@ -2210,7 +2215,7 @@ with tab_analytics:
         if pre_network:
             active_equity_stops = pd.DataFrame(pre_network['stops'])
             
-            # Map stop_id to route_id using relational GTFS files to resolve the KeyError
+            # Map stop_id to route_id using relational GTFS files
             if 'route_id' not in active_equity_stops.columns:
                 try:
                     st_subset = stop_times[['stop_id', 'trip_id']].drop_duplicates()
@@ -2221,12 +2226,18 @@ with tab_analytics:
                     st_tr_merged['stop_id'] = st_tr_merged['stop_id'].astype(str)
                     st_tr_merged['route_id'] = st_tr_merged['route_id'].astype(str)
                     
-                    # Aggregate mapping dictionary (first observed route per stop)
+                    # STRICT FILTER: Only allow 500-series Toronto Streetcar routes (e.g., 501-512)
+                    st_tr_merged = st_tr_merged[st_tr_merged['route_id'].str.match(r'^5\d{2}$', na=False)]
+                    
+                    # Aggregate mapping dictionary (first observed streetcar route per stop)
                     route_mapping = st_tr_merged.groupby('stop_id')['route_id'].first().to_dict()
                     
                     active_equity_stops['stop_id_str'] = active_equity_stops['stop_id'].astype(str)
                     active_equity_stops['route_id'] = active_equity_stops['stop_id_str'].map(route_mapping).fillna("Unknown")
                     active_equity_stops.drop(columns=['stop_id_str'], inplace=True)
+                    
+                    # Remove any stops that cannot be resolved to a streetcar line
+                    active_equity_stops = active_equity_stops[active_equity_stops['route_id'] != "Unknown"]
                 except Exception:
                     active_equity_stops['route_id'] = "Unknown"
 
