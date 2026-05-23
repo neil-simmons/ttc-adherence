@@ -1455,30 +1455,6 @@ parquet_path = get_parquet_path()
 available_routes = get_available_routes(parquet_path)
 stops, trips, stop_times, shapes = load_gtfs()
 
-# Additive persistent header layout for settings and accessibility controls
-col_settings_btn, col_accessibility_theme = st.columns([3, 1])
-
-with col_settings_btn:
-    if not st.session_state.show_settings:
-        if st.button("⚙️ Open Filter & Analysis Settings", type="primary", use_container_width=True):
-            st.session_state.show_settings = True
-            # -------------------------------------------------------------------
-            # Shadow State Restoration Logic (Pushes saved values back to widgets)
-            # -------------------------------------------------------------------
-            if 'saved_ui_state' in st.session_state:
-                for k, v in st.session_state.saved_ui_state.items():
-                    st.session_state[k] = v
-            st.rerun()
-
-with col_accessibility_theme:
-    # Persistent color theme control placed highly visible at the top of the page
-    st.selectbox(
-        "👁️ Display Theme",
-        options=["Default (Classic Red-Green)", "Accessible (Colorblind-Safe)"],
-        key="color_theme",
-        help="Switches color gradients on maps and charts to a high-contrast, colorblind-safe palette."
-    )
-
 if st.session_state.show_settings:
     with st.container():
         st.markdown("### ⚙️ Analysis & Filter Settings")
