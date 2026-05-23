@@ -1515,8 +1515,12 @@ with tab_map:
                 clean_display_stops['stop_name'] = clean_display_stops['stop_name'].astype(str)
 
             st.markdown("##### Route Stops")
+            
+            # Safe column check: only show 'sample_size' if it exists in the active dataset
+            stop_cols_to_show = [col for col in ['stop_name', 'reliability', 'sample_size'] if col in clean_display_stops.columns]
+            
             st.dataframe(
-                clean_display_stops[['stop_name', 'reliability', 'sample_size']],
+                clean_display_stops[stop_cols_to_show],
                 column_config={
                     'stop_name': st.column_config.TextColumn("Stop Station Name"),
                     'reliability': st.column_config.NumberColumn("On-Time Reliability Rate", format="%.1f%%"),
@@ -1532,8 +1536,11 @@ with tab_map:
                 if 'geometry' in display_segs.columns:
                     display_segs = display_segs.drop(columns=['geometry'])
                 
+                # Safe column check: prevents KeyError when 'sample_size' is missing in precomputed JSON
+                seg_cols_to_show = [col for col in ['segment', 'avg_reliability', 'sample_size'] if col in display_segs.columns]
+                
                 st.dataframe(
-                    display_segs[['segment', 'avg_reliability', 'sample_size']],
+                    display_segs[seg_cols_to_show],
                     column_config={
                         'segment': st.column_config.TextColumn("Inter-Stop Route Segment"),
                         'avg_reliability': st.column_config.NumberColumn("Average Corridor Segment Reliability", format="%.1f%%"),
