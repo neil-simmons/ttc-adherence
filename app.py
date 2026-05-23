@@ -1152,7 +1152,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                 'start_stop_idx', 'end_stop_idx', 'window_slider',
                 'time_mode', 'force_t0', 'isolated_trips', 'saved_ui_state',
                 'signatures_loaded', 'signature_list', 'trip_start_dict',
-                'analysis_results', 'raw_pipeline_data', 'color_theme'
+                'analysis_results', 'raw_pipeline_data'
             ]
             for k in keys_to_clear:
                 if k in st.session_state:
@@ -1495,6 +1495,14 @@ tab_map, tab_spaghetti, tab_stats = st.tabs([
 ])
 
 with tab_map:
+    # Additive Map-Specific Accessibility Toggle
+    st.selectbox(
+        "👁️ Map Color Theme",
+        options=["Default (Classic Red-Green)", "Accessible (Colorblind-Safe)"],
+        key="color_theme",
+        help="Switches the map's reliability color gradient to a high-contrast, colorblind-safe palette. Automatically persists across filter changes."
+    )
+    
     if not st.session_state.analysis_results:
         precomputed = load_precomputed_network()
         if precomputed:
@@ -1505,6 +1513,7 @@ with tab_map:
             # Inject anchors so the landing page colors lock to 0% - 100%
             stops_df, segments_df = inject_legend_anchors(stops_df, segments_df)
             
+            # Calls generate_kepler_config dynamically to apply theme changes instantly
             map_instance = KeplerGl(height=600, data={"stops": stops_df, "segments": segments_df}, config=generate_kepler_config())
             keplergl_static(map_instance, center_map=True)
         else:
@@ -1513,7 +1522,8 @@ with tab_map:
         st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
         results = st.session_state.analysis_results
         if 'segments_df' in results and not results['segments_df'].empty:
-            map_instance = KeplerGl(height=600, data={"stops": results['stops_df'], "segments": results['segments_df']}, config=results['kepler_config'])
+            # Calls generate_kepler_config dynamically instead of using the static saved version
+            map_instance = KeplerGl(height=600, data={"stops": results['stops_df'], "segments": results['segments_df']}, config=generate_kepler_config())
             keplergl_static(map_instance, center_map=True)
         else:
             st.warning("Spatial geometry could not be built for this route.")
