@@ -2493,7 +2493,6 @@ with tab_analytics:
             EQUITY_METRIC_OPTIONS = {
                 "Median Household Income ($)":          "median_income",
                 "Low-Income Households (%)":            "low_income_pct",
-                "Zero-Car Households (%)":              "zero_car_pct",
                 "Transit Commuters (%)":                "transit_commute_pct",
                 "Visible Minority Population (%)":      "visible_minority_pct",
                 "Recent Immigrants — Last 5 Yrs (%)":   "recent_immigrant_pct",
