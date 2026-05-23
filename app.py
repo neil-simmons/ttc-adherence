@@ -2209,6 +2209,26 @@ with tab_analytics:
         pre_network = load_precomputed_network()
         if pre_network:
             active_equity_stops = pd.DataFrame(pre_network['stops'])
+            
+            # Map stop_id to route_id using relational GTFS files to resolve the KeyError
+            if 'route_id' not in active_equity_stops.columns:
+                try:
+                    st_subset = stop_times[['stop_id', 'trip_id']].drop_duplicates()
+                    tr_subset = trips[['trip_id', 'route_id']].drop_duplicates()
+                    st_tr_merged = pd.merge(st_subset, tr_subset, on='trip_id', how='inner')
+                    
+                    # Convert keys to standard string formats
+                    st_tr_merged['stop_id'] = st_tr_merged['stop_id'].astype(str)
+                    st_tr_merged['route_id'] = st_tr_merged['route_id'].astype(str)
+                    
+                    # Aggregate mapping dictionary (first observed route per stop)
+                    route_mapping = st_tr_merged.groupby('stop_id')['route_id'].first().to_dict()
+                    
+                    active_equity_stops['stop_id_str'] = active_equity_stops['stop_id'].astype(str)
+                    active_equity_stops['route_id'] = active_equity_stops['stop_id_str'].map(route_mapping).fillna("Unknown")
+                    active_equity_stops.drop(columns=['stop_id_str'], inplace=True)
+                except Exception:
+                    active_equity_stops['route_id'] = "Unknown"
 
     # ── SECTION 1: TEMPORAL PATTERNS ──────────────────────────────────────
     st.markdown("### ⏱️ Temporal Patterns")
