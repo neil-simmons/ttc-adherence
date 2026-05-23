@@ -6,7 +6,8 @@ import os
 from datetime import datetime
 from google.transit import gtfs_realtime_pb2
 from google.protobuf import text_format
-
+#IMPORTANT: While this early program included harversine calculations, those last 2 extra columns
+# of data were eventually trimmed from the final downloaded dataset and are not used in the program
 # --- CONFIGURATION ---
 FEED_URL = "https://gtfsrt.ttc.ca/vehicles/position"
 POLL_INTERVAL = 15
