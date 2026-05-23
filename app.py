@@ -1760,3 +1760,186 @@ with tab_stats:
 
 st.markdown("---")
 st.caption("**Data Privacy Statement:** All data is open public data sourced from the City of Toronto Open Data Portal. © 2026 Neil Simmons. All rights reserved.")
+
+# ==============================================================================
+# 8. DIAGNOSTIC & AUTOMATED TESTING SUITE
+# ==============================================================================
+
+def run_pipeline_diagnostic_test(parquet_path, trips, stop_times, stops, shapes):
+    """
+    Scans every signature across all routes, testing tracking and spatial builds,
+    and flags any failures or signatures with non-zero start distances.
+    """
+    # Standard testing parameters
+    days_selected = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    filter_start_sec = 0
+    filter_end_sec = 120000  # Wide range to capture all daily operational hours
+    
+    failures = []
+    mid_route_starts = []
+    
+    routes = get_available_routes(parquet_path)
+    total_routes = len(routes)
+    
+    status_text = st.empty()
+    progress_bar = st.progress(0.0)
+    
+    for idx, route in enumerate(routes):
+        status_text.text(f"Testing Route {route} ({idx + 1}/{total_routes})...")
+        progress_bar.progress(idx / total_routes)
+        
+        try:
+            df_hist_raw = load_route_data(parquet_path, route)
+        except Exception as e:
+            failures.append({
+                "Route": route,
+                "Headsign": "All",
+                "Signature": "N/A",
+                "Failure Type": "Data Load Exception",
+                "Details": str(e)
+            })
+            continue
+            
+        gtfs_route_trips = trips[trips['route_id'] == route].copy()
+        headsigns = gtfs_route_trips['trip_headsign'].dropna().unique()
+        filtered_headsigns = [h for h in headsigns if "short" not in str(h).lower()]
+        
+        for headsign in filtered_headsigns:
+            dir_trips = gtfs_route_trips[gtfs_route_trips['trip_headsign'] == headsign]
+            if dir_trips.empty:
+                continue
+                
+            try:
+                sig_list, trip_start_dict = get_route_signatures(
+                    df_hist_raw, dir_trips, stop_times, stops, 
+                    filter_start_sec, filter_end_sec, days_selected
+                )
+            except Exception as e:
+                failures.append({
+                    "Route": route,
+                    "Headsign": headsign,
+                    "Signature": "N/A",
+                    "Failure Type": "Signature Init Exception",
+                    "Details": str(e)
+                })
+                continue
+            
+            for sig in sig_list:
+                sig_desc = f"{sig['orig']} → {sig['dest']}"
+                sample_trip = sig['t_ids'][0]
+                
+                # Retrieve stops list for the current signature
+                sample_stops = stop_times[stop_times['trip_id'] == sample_trip].sort_values('stop_sequence')
+                if sample_stops.empty:
+                    continue
+                
+                # Check for non-zero (mid-route) starting stop distances
+                first_stop_dist = float(sample_stops.iloc[0]['shape_dist_traveled'])
+                if sample_stops['shape_dist_traveled'].max() > 500:
+                    first_stop_dist /= 1000.0  # Normalize to km if raw GTFS is in meters
+                
+                if first_stop_dist > 0.05:  # Trigger if start distance > 50 meters
+                    mid_route_starts.append({
+                        "Route": route,
+                        "Headsign": headsign,
+                        "Signature": sig_desc,
+                        "Start Stop ID": sample_stops.iloc[0]['stop_id'],
+                        "Start Stop Name": sig['orig'],
+                        "Start Distance (km)": round(first_stop_dist, 3),
+                        "Total Runs": sig['runs']
+                    })
+                
+                # Execute pipeline dry-run
+                s2_vars = {
+                    'filter_start_sec': filter_start_sec,
+                    'filter_end_sec': filter_end_sec,
+                    'time_mode': "Overlap Mode",
+                    'force_t0': False,
+                    'days_selected': days_selected,
+                    'days_summary': "Mon-Fri",
+                    'time_range_str': "00:00-24:00",
+                    'window_early': -15,
+                    'window_late': 120,
+                    'stop_filter_ids': None,
+                    'total_route_stops': len(sample_stops),
+                    'isolated_trips': [],
+                    'signature_t_ids': sig['t_ids'],
+                    'trip_start_dict': trip_start_dict,
+                    'sig_desc': sig_desc
+                }
+                
+                try:
+                    # Test tracking step
+                    raw_data = run_tracking(df_hist_raw, sig['t_ids'], s2_vars, stop_times, stops, dir_trips, shapes)
+                    if not raw_data:
+                        failures.append({
+                            "Route": route,
+                            "Headsign": headsign,
+                            "Signature": sig_desc,
+                            "Failure Type": "Tracking Returned None",
+                            "Details": "No historical points aligned to track corridor shape"
+                        })
+                        continue
+                        
+                    # Test spatial construction step
+                    stops_df, segments_df, _, _ = build_spatial_data(
+                        raw_data['st_filtered'], raw_data['actual_relative_times'], 
+                        s2_vars['window_early'], s2_vars['window_late'], 
+                        shapes, raw_data['shape_id'], route, 0, headsign
+                    )
+                    
+                    if stops_df.empty:
+                        failures.append({
+                            "Route": route,
+                            "Headsign": headsign,
+                            "Signature": sig_desc,
+                            "Failure Type": "Empty Spatial Output",
+                            "Details": "Stops spatial construction returned an empty dataframe"
+                        })
+                except Exception as e:
+                    failures.append({
+                        "Route": route,
+                        "Headsign": headsign,
+                        "Signature": sig_desc,
+                        "Failure Type": "Runtime Exception",
+                        "Details": str(e)
+                    })
+        
+        # Actively release memory after processing each route chunk
+        del df_hist_raw
+        gc.collect()
+        
+    progress_bar.empty()
+    status_text.empty()
+    return pd.DataFrame(failures), pd.DataFrame(mid_route_starts)
+
+
+# Render developer diagnostic options in the UI
+st.markdown("---")
+with st.expander("🔧 Developer & Diagnostic Tools", expanded=False):
+    st.markdown("### Automated Pipeline Test & Validation Suite")
+    st.caption("This tool runs the core mathematical engine against all GTFS signatures to catch missing shapes, processing exceptions, or route variations that start mid-line.")
+    
+    if st.button("▶️ Run Full Network Diagnostic", type="secondary", use_container_width=True):
+        with st.spinner("Processing network validation diagnostics... This may take a moment."):
+            failures_df, mid_starts_df = run_pipeline_diagnostic_test(
+                parquet_path, trips, stop_times, stops, shapes
+            )
+            
+            st.markdown("#### Diagnostic Summary")
+            col_fail, col_mid = st.columns(2)
+            col_fail.metric("Pipeline Failures/Warnings", len(failures_df))
+            col_mid.metric("Signatures Starting Mid-Route (>0.05 km)", len(mid_starts_df))
+            
+            # Display results
+            if not failures_df.empty:
+                st.error("🚨 **Pipeline Failures Detected**")
+                st.dataframe(failures_df, use_container_width=True, hide_index=True)
+            else:
+                st.success("✅ No pipeline errors or tracking failures detected across the network.")
+                
+            if not mid_starts_df.empty:
+                st.warning("📍 **Signatures Starting Mid-Route**")
+                st.dataframe(mid_starts_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No signatures detected with start locations offset from 0.0km.")
