@@ -19,7 +19,9 @@ import pyarrow as pa
 import pyarrow.dataset as ds
 import warnings
 
+# Suppress FutureWarnings and GeoPandas CRS concatenation warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning, message=".*CRS not set for some of the concatenation inputs.*")
 
 # ==============================================================================
 # 0. CONFIGURATION & CONSTANTS
@@ -775,7 +777,7 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
             'geometry': geom
         })
         
-    segments_df = gpd.GeoDataFrame(segments, geometry='geometry', crs=LATLON_PROJ) if segments else gpd.GeoDataFrame()
+    segments_df = gpd.GeoDataFrame(segments, geometry='geometry', crs=LATLON_PROJ) if segments else gpd.GeoDataFrame(crs=LATLON_PROJ)
     return stops_df, segments_df, reliability_dict, reliability_vals
 
 def compute_trip_stats(raw_pipeline_data):
@@ -1127,7 +1129,7 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
             master_segments.drop(columns=['seg_rel_weighted'], inplace=True)
             master_segments = gpd.GeoDataFrame(master_segments, geometry='geometry', crs=LATLON_PROJ)
         else:
-            master_segments = gpd.GeoDataFrame()
+            master_segments = gpd.GeoDataFrame(crs=LATLON_PROJ)
             
         master_stops, master_segments = inject_legend_anchors(master_stops, master_segments)
         
@@ -1232,66 +1234,58 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                     st.warning("No GTFS Schedule Signatures scheduled to run within your current Time Window.")
                 else:
                     sig_opts = {
-                        i: f"({s['runs']} runs) | {s['orig']} → {s['dest']} | Scheduled: {format_seconds_to_time(s['min_sec'])}–{format_seconds_to_time(s['max_sec'])}" 
+                        i: f"({s['runs']} recorded runs) | {s['orig']} → {s['dest']} | Scheduled: {format_seconds_to_time(s['min_sec'])}–{format_seconds_to_time(s['max_sec'])}" 
                         for i, s in enumerate(st.session_state.signature_list)
                     }
                     
-                    selected_sig_indices = st.multiselect(
-                        "Select Schedule Signature(s)", 
+                    selected_sig_idx = st.selectbox(
+                        "Select Schedule Signature", 
                         options=list(sig_opts.keys()), 
-                        default=[0] if sig_opts else [],
                         format_func=lambda x: sig_opts[x], 
                         key="sig_selection", 
                         on_change=_clear_isolated_trips
                     )
-
-                    if selected_sig_indices:
-                        chosen_sigs = [st.session_state.signature_list[idx] for idx in selected_sig_indices]
-                        stop_sequences = [[stop[0] for stop in s['signature']] for s in chosen_sigs]
+                    
+                    st.markdown("---")
+                    st.markdown("**Corridor Selection** (Optional)")
+                    
+                    selected_sig = st.session_state.signature_list[selected_sig_idx]
+                    sample_t = selected_sig['t_ids'][0]
+                    
+                    sample_stops = stop_times[stop_times['trip_id'] == sample_t].sort_values('stop_sequence')
+                    sample_stops = sample_stops.merge(stops, on='stop_id', how='left')
+                    if sample_stops['shape_dist_traveled'].max() > 500: 
+                        sample_stops['shape_dist_traveled'] /= 1000.0
                         
-                        all_sequences_identical = all(seq == stop_sequences[0] for seq in stop_sequences)
-                        st.session_state.all_sequences_identical = all_sequences_identical
+                    stop_opts = sample_stops.to_dict('records')
+                    
+                    col_start, col_end = st.columns(2)
+                    with col_start:
+                        start_opts = list(range(len(stop_opts) - 1)) if len(stop_opts) > 1 else list(range(len(stop_opts)))
                         
-                        if len(selected_sig_indices) > 1:
-                            if not all_sequences_identical:
-                                st.warning(
-                                    "⚠️ **Different Stop Sequences Selected:** The chosen signatures do not share "
-                                    "the same sequence of stops. Sequential charts (Heatmaps, Boxplots, and Spaghetti charts) will be disabled."
-                                )
-                            else:
-                                st.info("ℹ️ **Compatible Signatures:** All chosen signatures share an identical sequence of physical stops.")
-
-                        selected_sig = chosen_sigs[0]
-                        sample_t = selected_sig['t_ids'][0]
-                        sample_stops = stop_times[stop_times['trip_id'] == sample_t].sort_values('stop_sequence')
-                        sample_stops = sample_stops.merge(stops, on='stop_id', how='left')
-                        if sample_stops['shape_dist_traveled'].max() > 500: 
-                            sample_stops['shape_dist_traveled'] /= 1000.0
+                        start_stop_idx = st.selectbox(
+                            "Start Stop", 
+                            options=start_opts, 
+                            format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
+                            key="start_stop_idx",
+                            on_change=validate_corridor_selection
+                        )
+                        
+                    with col_end:
+                        end_opts = list(range(start_stop_idx + 1, len(stop_opts))) if len(stop_opts) > 1 else list(range(len(stop_opts)))
+                        
+                        # Only set default to the last option if there is NO memory of a previous selection
+                        if "end_stop_idx" not in st.session_state or st.session_state["end_stop_idx"] not in end_opts:
+                            st.session_state["end_stop_idx"] = end_opts[-1] if end_opts else 0
                             
-                        stop_opts = sample_stops.to_dict('records')
+                        end_stop_idx = st.selectbox(
+                            "End Stop", 
+                            options=end_opts, 
+                            format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
+                            key="end_stop_idx"
+                        )
                         
-                        col_start, col_end = st.columns(2)
-                        with col_start:
-                            start_opts = list(range(len(stop_opts) - 1)) if len(stop_opts) > 1 else list(range(len(stop_opts)))
-                            start_stop_idx = st.selectbox(
-                                "Start Stop", 
-                                options=start_opts, 
-                                format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
-                                key="start_stop_idx",
-                                on_change=validate_corridor_selection
-                            )
-                        with col_end:
-                            end_opts = list(range(start_stop_idx + 1, len(stop_opts))) if len(stop_opts) > 1 else list(range(len(stop_opts)))
-                            if "end_stop_idx" not in st.session_state or st.session_state["end_stop_idx"] not in end_opts:
-                                st.session_state["end_stop_idx"] = end_opts[-1] if end_opts else 0
-                            end_stop_idx = st.selectbox(
-                                "End Stop", 
-                                options=end_opts, 
-                                format_func=lambda i: f"{stop_opts[i]['stop_name']} ({stop_opts[i]['shape_dist_traveled']:.1f} km)",
-                                key="end_stop_idx"
-                            )
-                        selected_stop_ids = [s['stop_id'] for s in stop_opts[start_stop_idx : end_stop_idx + 1]]
-
+                    selected_stop_ids = [s['stop_id'] for s in stop_opts[start_stop_idx : end_stop_idx + 1]]
 
     with st.expander("Advanced Configuration"):
         st.slider("On-Time Reliability Window (Seconds)", min_value=-300, max_value=300, step=5, key="window_slider", help="Negative values allow early arrivals. Positive values allow late arrivals.")
@@ -1305,15 +1299,8 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
         st.checkbox("Align to First Observed Stop (Override GTFS Start)", key="force_t0", disabled=f_disabled, help="Calculates relative delays by anchoring t=0 at the first physical GPS ping at the origin stop, instead of the official GTFS scheduled departure. Disabled if Start Stop is not the true route origin.")
         
         if not adv_mode and len(filtered_headsigns) > 0 and st.session_state.signatures_loaded and st.session_state.signature_list:
-            # Combine trip IDs across all selected signature indices
-            if 'selected_sig_indices' in locals() and selected_sig_indices:
-                available_tids = []
-                for idx in selected_sig_indices:
-                    available_tids.extend(st.session_state.signature_list[idx]['t_ids'])
-                available_tids = sorted(list(set(available_tids)))
-            else:
-                available_tids = []
-
+            selected_sig_idx = st.session_state.get('sig_selection', 0)
+            available_tids = st.session_state.signature_list[selected_sig_idx]['t_ids']
             st.multiselect("Isolate Specific Trip IDs", options=available_tids, key="isolated_trips", help="Explicitly filter the analysis to only process these scheduled trips.")
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1369,23 +1356,11 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
         }
         
         if not adv_mode:
-            if not selected_sig_indices:
-                st.error("Please select at least one Schedule Signature.")
-                return
-                
-            combined_trip_ids = []
-            for idx in selected_sig_indices:
-                combined_trip_ids.extend(st.session_state.signature_list[idx]['t_ids'])
-
-            primary_sig = st.session_state.signature_list[selected_sig_indices[0]]
-            sig_desc = f"{primary_sig['orig']} → {primary_sig['dest']}"
-            if len(selected_sig_indices) > 1:
-                sig_desc += f" (+ {len(selected_sig_indices) - 1} other signature variations)"
-
-            s2_vars['signature_t_ids'] = combined_trip_ids
+            selected_sig = st.session_state.signature_list[selected_sig_idx]
+            s2_vars['signature_t_ids'] = selected_sig['t_ids']
             s2_vars['trip_start_dict'] = st.session_state.trip_start_dict
-            s2_vars['sig_desc'] = sig_desc
-            s2_vars['sequences_identical'] = st.session_state.get('all_sequences_identical', True)
+            s2_vars['sig_desc'] = f"{selected_sig['orig']} → {selected_sig['dest']}"
+            s2_vars['sequences_identical'] = True  # Guaranteed by single signature selection
         
         with st.spinner("Processing analysis pipeline..."):
             if adv_mode:
@@ -1750,12 +1725,9 @@ def build_delay_variance_chart(trip_stats):
     return fig
 
 def build_equity_scatter(stops_df, equity_gdf, equity_field, metric_label):
-    # Create a copy of stops and split/explode route_id if they are comma-separated 
-    # (common in precomputed network or multi-route pipelines)
+    # Split "501, 504" into ['501', '504'] and create separate rows for clean coloring
     stops_clean = stops_df.copy()
     stops_clean['route_id'] = stops_clean['route_id'].astype(str)
-    
-    # Split "501, 504" into ['501', '504'] and create separate rows for clean coloring
     stops_clean['route_id'] = stops_clean['route_id'].str.split(', ')
     stops_clean = stops_clean.explode('route_id')
     stops_clean['route_id'] = stops_clean['route_id'].str.strip()
@@ -1970,7 +1942,7 @@ if st.session_state.analysis_results is not None and not st.session_state.analys
 
 tab_map, tab_spaghetti, tab_stats, tab_analytics, tab_recal = st.tabs([
     "🗺️ Route Reliability Map",
-    "🧵 Time-Distance Chart",
+    "🍝 Time-Distance Chart",
     "📊 Density Chart",
     "📈 Analytics",
     "📅 Schedule Recalibration",
@@ -2522,9 +2494,8 @@ with tab_analytics:
                         "filters in the settings panel and re-run to enable."
                     )
 
-        st.markdown("---")
-
         # ── SECTION 3: EQUITY ─────────────────────────────────────────────────
+        st.markdown("---")
         st.markdown("### 🏘️ Equity Analysis")
 
         try:
