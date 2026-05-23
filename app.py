@@ -11,8 +11,7 @@ import json
 import datetime
 import re
 from huggingface_hub import hf_hub_download
-# Remove: from streamlit_keplergl import keplergl_static
-import streamlit.components.v1 as components
+from streamlit_keplergl import keplergl_static
 from keplergl import KeplerGl
 import pyarrow.parquet as pq
 import pyarrow.compute as pc
@@ -20,9 +19,7 @@ import pyarrow as pa
 import pyarrow.dataset as ds
 import warnings
 
-# Suppress FutureWarnings and GeoPandas CRS concatenation warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", category=UserWarning, message=".*CRS not set for some of the concatenation inputs.*")
 
 # ==============================================================================
 # 0. CONFIGURATION & CONSTANTS
@@ -500,15 +497,6 @@ def generate_equity_kepler_config():
             "mapStyle": {"styleType": "muted_night"}
         }
     }
-    
-def render_kepler_safely(map_instance, height=600):
-    """Safely renders KeplerGL using native iframes to prevent SessionInfo crashes."""
-    html_data = map_instance._repr_html_()
-    # KeplerGL's _repr_html_ can return bytes in some environments; decode if necessary
-    if isinstance(html_data, bytes):
-        html_data = html_data.decode("utf-8")
-    components.html(html_data, height=height)
-    
 # ==============================================================================
 # 4. MODULARIZED PIPELINE FUNCTIONS
 # ==============================================================================
@@ -787,7 +775,7 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
             'geometry': geom
         })
         
-    segments_df = gpd.GeoDataFrame(segments, geometry='geometry', crs=LATLON_PROJ) if segments else gpd.GeoDataFrame(crs=LATLON_PROJ)
+    segments_df = gpd.GeoDataFrame(segments, geometry='geometry', crs=LATLON_PROJ) if segments else gpd.GeoDataFrame()
     return stops_df, segments_df, reliability_dict, reliability_vals
 
 def compute_trip_stats(raw_pipeline_data):
@@ -1139,14 +1127,14 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
             master_segments.drop(columns=['seg_rel_weighted'], inplace=True)
             master_segments = gpd.GeoDataFrame(master_segments, geometry='geometry', crs=LATLON_PROJ)
         else:
-            master_segments = gpd.GeoDataFrame(crs=LATLON_PROJ)
+            master_segments = gpd.GeoDataFrame()
             
         master_stops, master_segments = inject_legend_anchors(master_stops, master_segments)
         
         t_str = f"Multi-Route Analysis | {s2_vars['days_summary']} | {s2_vars['time_range_str']} | Mode: {s2_vars['time_mode']} | Window: {s2_vars['window_early']}s to +{s2_vars['window_late']}s"
         st.session_state.raw_pipeline_data = {'title_info': t_str}
         st.session_state.analysis_results = {'is_multi': True, 'stops_df': master_stops, 'segments_df': master_segments, 'kepler_config': generate_kepler_config()}
-        announce_sr("Multi-route calculations complete. Network map refreshed with collective performance metrics.")
+        announce_sr("Route-Level calculations complete. Network map refreshed with collective performance metrics.")
         return True
     finally:
         lock.release()
@@ -1202,7 +1190,8 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
 
     with col_a:
         st.subheader("1. Route Selection")
-        adv_mode = st.toggle("Advanced: Multi-Route Analysis", key="adv_mode", on_change=reset_signatures)
+        adv_mode = st.toggle("Advanced: Route-Level Analysis", key="adv_mode", on_change=reset_signatures)
+        #Advanced: Route-Level Analysis used to be called Multi-Level Analysis
         
         if adv_mode:
             all_options = get_all_route_directions(trips, available_routes)
@@ -1243,11 +1232,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                 if not st.session_state.signature_list:
                     st.warning("No GTFS Schedule Signatures scheduled to run within your current Time Window.")
                 else:
-                    sig_opts = {
-                        i: f"({s['runs']} recorded runs) | {s['orig']} → {s['dest']} | Scheduled: {format_seconds_to_time(s['min_sec'])}–{format_seconds_to_time(s['max_sec'])}" 
-                        for i, s in enumerate(st.session_state.signature_list)
-                    }
-                    
+                    sig_opts = {i: f"({s['runs']} recorded runs) | {s['orig']} → {s['dest']} | Scheduled: {format_seconds_to_time(s['min_sec'])}–{format_seconds_to_time(s['max_sec'])}" for i, s in enumerate(st.session_state.signature_list)}
                     selected_sig_idx = st.selectbox(
                         "Select Schedule Signature", 
                         options=list(sig_opts.keys()), 
@@ -1309,7 +1294,6 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
         st.checkbox("Align to First Observed Stop (Override GTFS Start)", key="force_t0", disabled=f_disabled, help="Calculates relative delays by anchoring t=0 at the first physical GPS ping at the origin stop, instead of the official GTFS scheduled departure. Disabled if Start Stop is not the true route origin.")
         
         if not adv_mode and len(filtered_headsigns) > 0 and st.session_state.signatures_loaded and st.session_state.signature_list:
-            selected_sig_idx = st.session_state.get('sig_selection', 0)
             available_tids = st.session_state.signature_list[selected_sig_idx]['t_ids']
             st.multiselect("Isolate Specific Trip IDs", options=available_tids, key="isolated_trips", help="Explicitly filter the analysis to only process these scheduled trips.")
 
@@ -1370,7 +1354,6 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
             s2_vars['signature_t_ids'] = selected_sig['t_ids']
             s2_vars['trip_start_dict'] = st.session_state.trip_start_dict
             s2_vars['sig_desc'] = f"{selected_sig['orig']} → {selected_sig['dest']}"
-            s2_vars['sequences_identical'] = True  # Guaranteed by single signature selection
         
         with st.spinner("Processing analysis pipeline..."):
             if adv_mode:
@@ -1735,19 +1718,11 @@ def build_delay_variance_chart(trip_stats):
     return fig
 
 def build_equity_scatter(stops_df, equity_gdf, equity_field, metric_label):
-    # Split "501, 504" into ['501', '504'] and create separate rows for clean coloring
-    stops_clean = stops_df.copy()
-    stops_clean['route_id'] = stops_clean['route_id'].astype(str)
-    stops_clean['route_id'] = stops_clean['route_id'].str.split(', ')
-    stops_clean = stops_clean.explode('route_id')
-    stops_clean['route_id'] = stops_clean['route_id'].str.strip()
-
     stops_gdf = gpd.GeoDataFrame(
-        stops_clean,
-        geometry=gpd.points_from_xy(stops_clean['stop_lon'], stops_clean['stop_lat']),
+        stops_df.copy(),
+        geometry=gpd.points_from_xy(stops_df['stop_lon'], stops_df['stop_lat']),
         crs=LATLON_PROJ
     )
-    
     joined = gpd.sjoin(
         stops_gdf[['stop_name','route_id','reliability','sample_size','geometry']],
         equity_gdf[['area_name', equity_field, 'geometry']],
@@ -1757,26 +1732,17 @@ def build_equity_scatter(stops_df, equity_gdf, equity_field, metric_label):
     n_total = len(stops_df[stops_df['stop_lat'].notna()])
     n_joined = len(joined)
 
-    unique_routes = sorted(joined['route_id'].unique(), key=lambda x: str(x))
+    unique_routes = sorted(joined['route_id'].astype(str).unique())
     fig = go.Figure()
 
     for i, route in enumerate(unique_routes):
         color = WCAG_ROUTE_COLORS[i % len(WCAG_ROUTE_COLORS)]
         shape = WCAG_ROUTE_SHAPES[i % len(WCAG_ROUTE_SHAPES)]
-        route_data = joined[joined['route_id'] == route]
-        
+        route_data = joined[joined['route_id'].astype(str) == route]
         fig.add_trace(go.Scatter(
-            x=route_data[equity_field], 
-            y=route_data['reliability'],
-            mode='markers', 
-            name=f"Route {route}",
-            marker=dict(
-                size=11, 
-                color=color, 
-                symbol=shape, 
-                opacity=0.85, 
-                line=dict(width=1.0, color='#FFFFFF')
-            ),
+            x=route_data[equity_field], y=route_data['reliability'],
+            mode='markers', name=f"Route {route}",
+            marker=dict(size=12, color=color, symbol=shape, opacity=0.80, line=dict(width=1.0, color='#FFFFFF')),
             text=route_data['stop_name'] + ' — ' + route_data['area_name'].fillna('Outside boundary'),
             hovertemplate="%{text}<br>" + metric_label + ": %{x:.1f}<br>Reliability: %{y:.1f}%<extra></extra>"
         ))
@@ -1794,11 +1760,9 @@ def build_equity_scatter(stops_df, equity_gdf, equity_field, metric_label):
         ))
 
     fig.update_layout(
-        title=f"Stop Reliability vs {metric_label} — N = {n_joined} stops plotted",
-        xaxis_title=metric_label, 
-        yaxis_title="On-Time Reliability (%)",
-        yaxis=dict(range=[0, 105]), 
-        template="plotly_white",
+        title=f"Stop Reliability vs {metric_label}  —  N = {n_joined} of {n_total} stops",
+        xaxis_title=metric_label, yaxis_title="On-Time Reliability (%)",
+        yaxis=dict(range=[0, 100]), template="plotly_white",
         legend=dict(title="Route", x=1.02, xanchor='left')
     )
     return fig
@@ -1978,7 +1942,7 @@ with tab_map:
             
             # Calls generate_kepler_config dynamically to apply theme changes instantly
             map_instance = KeplerGl(height=600, data={"stops": stops_df, "segments": segments_df}, config=generate_kepler_config())
-            render_kepler_safely(map_instance, height=600)
+            keplergl_static(map_instance, center_map=True)
         else:
             st.info("🗺️ **Map View is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
     else:
@@ -1987,7 +1951,7 @@ with tab_map:
         if 'segments_df' in results and not results['segments_df'].empty:
             # Calls generate_kepler_config dynamically instead of using the static saved version
             map_instance = KeplerGl(height=600, data={"stops": results['stops_df'], "segments": results['segments_df']}, config=generate_kepler_config())
-            render_kepler_safely(map_instance, height=600)
+            keplergl_static(map_instance, center_map=True)
         else:
             st.warning("Spatial geometry could not be built for this route.")
 
@@ -2110,7 +2074,7 @@ with tab_map:
             del tooltip_fields["stops"]
             
     equity_map = KeplerGl(height=650, data=data_dict, config=equity_config)
-    render_kepler_safely(equity_map, height=650)
+    keplergl_static(equity_map, center_map=True)
 
     # -------------------------------------------------------------------------
     # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR CENSUS NEIGHBOURHOOD EQUITY DATA
@@ -2504,95 +2468,84 @@ with tab_analytics:
                         "filters in the settings panel and re-run to enable."
                     )
 
-        # ── SECTION 3: EQUITY ─────────────────────────────────────────────────
         st.markdown("---")
+
+        # ── SECTION 3: EQUITY ─────────────────────────────────────────────────
         st.markdown("### 🏘️ Equity Analysis")
 
         try:
-            equity_gdf = load_equity_data()
+            equity_gdf     = load_equity_data()
             equity_available = (equity_gdf is not None and not equity_gdf.empty)
         except Exception:
             equity_available = False
 
         if not equity_available:
             st.info(
-                "🏘️ **Equity data is not available.** Upload `equity_neighbourhoods.geojson` "
-                "to the HuggingFace repository to enable this section."
+                "🏘️ **Equity data is not available.** Upload "
+                "`equity_neighbourhoods.geojson` to the HuggingFace repository "
+                "to enable this section. See the Route Reliability Map tab for "
+                "upload instructions."
+            )
+        elif not has_analysis:
+            st.info(
+                "🏘️ **Run an analysis first** to enable the equity scatter chart."
             )
         else:
-            # 1. Determine active stops dataset (Active Analysis or Precomputed Startup Fallback)
-            active_stops_df = None
-            is_precomputed_fallback = False
+            EQUITY_METRIC_OPTIONS = {
+                "Median Household Income ($)":          "median_income",
+                "Low-Income Households (%)":            "low_income_pct",
+                "Transit Commuters (%)":                "transit_commute_pct",
+                "Visible Minority Population (%)":      "visible_minority_pct",
+                "Recent Immigrants — Last 5 Yrs (%)":   "recent_immigrant_pct",
+                "Seniors 65+ (%)":                      "senior_pct",
+            }
 
-            if st.session_state.analysis_results is not None:
-                active_stops_df = st.session_state.analysis_results.get('stops_df')
-            else:
-                pre_network = load_precomputed_network()
-                if pre_network:
-                    active_stops_df = pd.DataFrame(pre_network['stops'])
-                    is_precomputed_fallback = True
+            st.caption(
+                "Each dot represents one stop, plotted against the equity indicator "
+                "for the neighbourhood it falls within. Dots are colour-coded and "
+                "shape-coded by route — both visual channels are used so the chart "
+                "remains readable for users with colour vision differences."
+            )
 
-            if active_stops_df is None or active_stops_df.empty:
-                st.info("🏘️ No stop reliability data is loaded to generate the scatter comparison.")
-            else:
-                EQUITY_METRIC_OPTIONS = {
-                    "Median Household Income ($)":          "median_income",
-                    "Low-Income Households (%)":            "low_income_pct",
-                    "Transit Commuters (%)":                "transit_commute_pct",
-                    "Visible Minority Population (%)":      "visible_minority_pct",
-                    "Recent Immigrants — Last 5 Yrs (%)":   "recent_immigrant_pct",
-                    "Seniors 65+ (%)":                      "senior_pct",
-                }
+            selected_label = st.selectbox(
+                "Equity metric to compare against stop reliability:",
+                options = list(EQUITY_METRIC_OPTIONS.keys()),
+                key     = "equity_metric_select"
+            )
+            selected_field = EQUITY_METRIC_OPTIONS[selected_label]
 
-                st.caption(
-                    "Each dot represents one stop, plotted against the equity indicator "
-                    "for the neighbourhood it falls within. Dots are colour-coded and "
-                    "shape-coded by route to support accessibility and high-contrast viewing."
+            stops_clean = st.session_state.analysis_results['stops_df']
+            stops_clean = stops_clean[stops_clean['stop_lat'].notna()].copy()
+
+            fig_eq = build_equity_scatter(
+                stops_clean, equity_gdf, selected_field, selected_label
+            )
+            st.plotly_chart(fig_eq, use_container_width=True, config=PLOTLY_CONFIG, key="chart_equity")
+            announce_sr(
+                f"Equity scatter chart rendered: stop reliability versus "
+                f"{selected_label}."
+            )
+            
+            with st.expander("📋 View data as accessible table", expanded=False):
+                st.caption(f"Accessible data table for Equity Scatter ({selected_label})")
+                stops_gdf = gpd.GeoDataFrame(
+                    stops_clean.copy(),
+                    geometry=gpd.points_from_xy(stops_clean['stop_lon'], stops_clean['stop_lat']),
+                    crs=LATLON_PROJ
                 )
-
-                selected_label = st.selectbox(
-                    "Equity metric to compare against stop reliability:",
-                    options=list(EQUITY_METRIC_OPTIONS.keys()),
-                    key="equity_metric_select_analytics_tab"
+                joined = gpd.sjoin(
+                    stops_gdf[['stop_name','route_id','reliability','geometry']],
+                    equity_gdf[['area_name', selected_field, 'geometry']],
+                    how='left', predicate='within'
                 )
-                selected_field = EQUITY_METRIC_OPTIONS[selected_label]
-
-                # Filter out legend boundary rows and missing coordinate entries
-                stops_clean = active_stops_df[active_stops_df['stop_lat'].notna()].copy()
-
-                fig_eq = build_equity_scatter(
-                    stops_clean, equity_gdf, selected_field, selected_label
-                )
-
-                if is_precomputed_fallback:
-                    fig_eq.update_layout(title=f"System-Wide Stop Reliability vs {selected_label} (Precomputed Baseline)")
-                else:
-                    title_info = st.session_state.raw_pipeline_data.get('title_info', 'Custom Analysis')
-                    fig_eq.update_layout(title=f"Analysis Stops vs {selected_label}<br><sub>{title_info}</sub>")
-
-                st.plotly_chart(fig_eq, use_container_width=True, config=PLOTLY_CONFIG, key="chart_equity")
-                announce_sr(f"Equity scatter chart rendered: stop reliability versus {selected_label}.")
-                
-                with st.expander("📋 View data as accessible table", expanded=False):
-                    st.caption(f"Accessible data table for Equity Scatter ({selected_label})")
-                    stops_gdf = gpd.GeoDataFrame(
-                        stops_clean.copy(),
-                        geometry=gpd.points_from_xy(stops_clean['stop_lon'], stops_clean['stop_lat']),
-                        crs=LATLON_PROJ
-                    )
-                    joined = gpd.sjoin(
-                        stops_gdf[['stop_name','route_id','reliability']],
-                        equity_gdf[['area_name', selected_field, 'geometry']],
-                        how='left', predicate='within'
-                    )
-                    joined = joined.dropna(subset=[selected_field, 'reliability']).sort_values('reliability')
-                    joined = joined.rename(columns={
-                        'stop_name': 'Stop Name', 'route_id': 'Route',
-                        'area_name': 'Neighbourhood', selected_field: selected_label,
-                        'reliability': 'Reliability (%)'
-                    })
-                    st.write(f"Showing {len(joined)} matching stops.")
-                    st.dataframe(joined[['Stop Name', 'Route', 'Neighbourhood', selected_label, 'Reliability (%)']], hide_index=True)
+                joined = joined.dropna(subset=[selected_field, 'reliability']).sort_values('reliability')
+                joined = joined.rename(columns={
+                    'stop_name': 'Stop Name', 'route_id': 'Route',
+                    'area_name': 'Neighbourhood', selected_field: selected_label,
+                    'reliability': 'Reliability (%)'
+                })
+                st.write(f"Showing {len(joined)} joined stops.")
+                st.dataframe(joined[['Stop Name', 'Route', 'Neighbourhood', selected_label, 'Reliability (%)']], hide_index=True)
 
 with tab_recal:
     has_analysis = st.session_state.analysis_results is not None
