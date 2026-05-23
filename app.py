@@ -1589,14 +1589,14 @@ with tab_map:
     
     with st.expander("📖 Layer Guide", expanded=False):
         st.markdown("""
-| Layer Name | What It Shows | Why It Matters |
-|---|---|---|
-| Median Household Income ($) | Neighbourhood median household income | Lower-income areas have fewer alternatives to transit |
-| Low-Income Households (%) | Share of residents below low-income measure (after tax) | Directly measures economic vulnerability to service gaps |
-| Transit Commuters (%) — Transit Dependence | Share of employed residents commuting by transit | Shows which communities rely on transit for employment access |
-| Visible Minority Population (%) | Share identifying as visible minority | Racialized communities in Toronto face disproportionate transit impacts |
-| Recent Immigrants — Last 5 Years (%) | Share who immigrated within 5 years | Newcomers are often transit-dependent and less familiar with disruption patterns |
-| Seniors 65+ (%) | Share of population aged 65 or older | Older adults have reduced tolerance for schedule unreliability and longer walks |
+| Layer Name | What It Shows |
+|---|---|
+| Median Household Income ($) | Neighbourhood median household income |
+| Low-Income Households (%) | Share of residents below low-income measure (after tax) |
+| Transit Commuters (%) — Transit Dependence | Share of employed residents commuting by transit |
+| Visible Minority Population (%) | Share identifying as visible minority |
+| Recent Immigrants — Last 5 Years (%) | Share who immigrated within 5 years |
+| Seniors 65+ (%) | Share of population aged 65 or older |
 """)
     
     equity_gdf = load_equity_data()
