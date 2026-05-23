@@ -31,13 +31,24 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# MOBILE WARNING CSS INJECTION
+# MOBILE WARNING CSS INJECTION & ACCESSIBILITY SCREEN-READER CLASSES
 st.markdown("""
 <style>
 .mobile-warning { display: none; background-color: #ffcccc; color: #900; padding: 12px; border-left: 6px solid #DA251D; margin-bottom: 15px; font-size: 14px; border-radius: 4px; }
 @media (max-width: 768px) { .mobile-warning { display: block; } }
+/* Standard off-screen styling to provide structural details strictly to screen readers without modifying visual layout */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
+}
 </style>
-<div class="mobile-warning">⚠️ <b>Mobile Device Detected:</b> This dashboard includes extremely dense data visualizations. Please open on a desktop computer for the best experience with the Time-Distance and Density charts.</div>
+<div class="mobile-warning" role="alert" aria-live="polite">⚠️ <b>Mobile Device Detected:</b> This dashboard includes extremely dense data visualizations. Please open on a desktop computer for the best experience with the Time-Distance and Density charts.</div>
 """, unsafe_allow_html=True)
 
 
@@ -67,6 +78,10 @@ PLOTLY_CONFIG = {
     "displaylogo": False,
     "modeBarButtonsToRemove": ["lasso2d", "select2d"]
 }
+
+# Additive Screen-Reader Announcement Utility
+def announce_sr(text):
+    st.markdown(f'<div class="sr-only" role="status" aria-live="polite">{text}</div>', unsafe_allow_html=True)
 
 @st.cache_resource
 def get_network_lock():
@@ -739,7 +754,7 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
     y_tick_texts = []
     for _, row in raw_data['st_filtered'].iterrows():
         clean_name = clean_stop_name(row['stop_name'])
-        y_tick_texts.append(f"{clean_name} ({row['shape_dist_traveled']:.1f}km) | Rel: {reliability_dict[row['stop_id']]}")
+        y_tick_texts.append(f"{clean_name} ({row['shape_dist_traveled']:.1f}km) | Rel: {reliability_dict[row['stop_id']]} ")
         
     fig_A = go.Figure()
     for stop in raw_data['st_filtered'].itertuples():
@@ -853,6 +868,7 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
     fig_B.update_layout(**common_layout, title=f"{t_str} — Time-Distance", hovermode='closest')
 
     st.session_state.analysis_results = {'is_multi': False, 'fig_A': fig_A, 'fig_B': fig_B, 'stops_df': stops_df, 'segments_df': segments_df, 'kepler_config': generate_kepler_config()}
+    announce_sr(f"Analysis completed successfully for Route {selected_route}. Visual charts and geographic maps are updated.")
     return True
 
 def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_times, stops, shapes, s2_vars):
@@ -939,6 +955,7 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
         t_str = f"Multi-Route Analysis | {s2_vars['days_summary']} | {s2_vars['time_range_str']} | Mode: {s2_vars['time_mode']} | Window: {s2_vars['window_early']}s to +{s2_vars['window_late']}s"
         st.session_state.raw_pipeline_data = {'title_info': t_str}
         st.session_state.analysis_results = {'is_multi': True, 'stops_df': master_stops, 'segments_df': master_segments, 'kepler_config': generate_kepler_config()}
+        announce_sr("Multi-route calculations complete. Network map refreshed with collective performance metrics.")
         return True
     finally:
         lock.release()
@@ -1001,7 +1018,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
             if "multi_routes" not in st.session_state: st.session_state.multi_routes = all_options[:2]
             
             selected_combos = st.multiselect("Select Routes & Directions", options=all_options, key="multi_routes")
-            st.info("⚠️ Calculating the entire network may a while. Detailed charts will be disabled.")
+            st.info("⚠️ Calculating the entire network may take a while. Detailed charts will be disabled.")
             
         else:
             selected_route = st.selectbox("Route", available_routes, key="route_selection", on_change=reset_signatures)
@@ -1029,6 +1046,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                     st.session_state.signature_list = sig_list
                     st.session_state.trip_start_dict = trip_start_dict
                     st.session_state.signatures_loaded = True
+                    announce_sr(f"Found {len(sig_list)} available schedule signatures matching your parameters.")
                     
             if st.session_state.signatures_loaded:
                 if not st.session_state.signature_list:
@@ -1464,6 +1482,67 @@ with tab_map:
         else:
             st.warning("Spatial geometry could not be built for this route.")
 
+    # -------------------------------------------------------------------------
+    # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR PRECOMPUTED AND CUSTOM MAPS
+    # -------------------------------------------------------------------------
+    active_stops_df = None
+    active_segments_df = None
+    is_custom = False
+
+    if st.session_state.analysis_results:
+        active_stops_df = st.session_state.analysis_results.get('stops_df')
+        active_segments_df = st.session_state.analysis_results.get('segments_df')
+        is_custom = True
+    else:
+        pre_network = load_precomputed_network()
+        if pre_network:
+            active_stops_df = pd.DataFrame(pre_network['stops'])
+            active_segments_df = gpd.GeoDataFrame.from_features(pre_network['segments']['features'])
+
+    if active_stops_df is not None and not active_stops_df.empty:
+        st.markdown("<br>", unsafe_allow_html=True)
+        with st.expander("📊 View Map Stops and Segments as an Accessible Table", expanded=False):
+            st.caption("This collapsible data table acts as an accessible, high-contrast text alternative to the visual map representation above, supporting both screen readers and keyboard navigation.")
+            if is_custom:
+                st.caption("Showing performance statistics for the currently calculated route analysis.")
+            else:
+                st.caption("Showing default network overview statistics.")
+            
+            # Filter out non-geographic anchor legends
+            clean_display_stops = active_stops_df[active_stops_df['stop_lat'].notna()].copy()
+            if 'stop_name' in clean_display_stops.columns:
+                # Ensure the full, untruncated stop name is presented to prevent informational loss
+                clean_display_stops['stop_name'] = clean_display_stops['stop_name'].astype(str)
+
+            st.markdown("##### Route Stops")
+            st.dataframe(
+                clean_display_stops[['stop_name', 'reliability', 'sample_size']],
+                column_config={
+                    'stop_name': st.column_config.TextColumn("Stop Station Name"),
+                    'reliability': st.column_config.NumberColumn("On-Time Reliability Rate", format="%.1f%%"),
+                    'sample_size': st.column_config.NumberColumn("Measured Runs (Sample Size)", format="%d")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+
+            if active_segments_df is not None and not active_segments_df.empty:
+                st.markdown("##### Corridor Segments")
+                display_segs = pd.DataFrame(active_segments_df).copy()
+                if 'geometry' in display_segs.columns:
+                    display_segs = display_segs.drop(columns=['geometry'])
+                
+                st.dataframe(
+                    display_segs[['segment', 'avg_reliability', 'sample_size']],
+                    column_config={
+                        'segment': st.column_config.TextColumn("Inter-Stop Route Segment"),
+                        'avg_reliability': st.column_config.NumberColumn("Average Corridor Segment Reliability", format="%.1f%%"),
+                        'sample_size': st.column_config.NumberColumn("Aggregate Runs Measured", format="%d")
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+
     st.markdown("---")
     st.markdown("### 🏘️ Equity Context Map")
     st.markdown("Neighbourhood-level equity indicators from Statistics Canada 2021 Census and City of Toronto Open Data, overlaid with transit reliability. **Use the layer panel (top-left of the map) to toggle between equity indicators.** Transit segments and stops reflect the current analysis if one has been run, otherwise show the all-routes precomputed network.")
@@ -1556,6 +1635,45 @@ with tab_spaghetti:
         else:
             gmaps_link_container.caption("👉 Click any data point on the chart to generate a Google Maps link for that exact location.")
             
+        # ---------------------------------------------------------------------
+        # ADDITIVE KEYBOARD-ACCESSIBLE GOOGLE MAPS LINK LOOKUP alternative
+        # ---------------------------------------------------------------------
+        st.markdown("<br>", unsafe_allow_html=True)
+        with st.expander("⌨️ Keyboard Navigation Alternative for Spaghetti Chart Points", expanded=False):
+            st.caption("Plotly canvas charts can be difficult to control using keyboard-only commands. Use these dropdown menus as a semantic, accessible interface to generate the exact same Google Maps links.")
+            raw_lines = st.session_state.raw_pipeline_data.get('mode_b_lines', [])
+            if raw_lines:
+                line_options = {idx: f"{item['op_date']} | Trip ID: {item['t_id']} (Departed: {item['start_time']})" for idx, item in enumerate(raw_lines)}
+                selected_line_idx = st.selectbox(
+                    "Select Target Active Run", 
+                    options=list(line_options.keys()), 
+                    format_func=lambda idx: line_options[idx],
+                    key="keyboard_run_selector"
+                )
+                
+                chosen_line_data = raw_lines[selected_line_idx]
+                valid_point_coords = [(idx, abs_time, latitude, longitude) for idx, (abs_time, latitude, longitude) in enumerate(zip(chosen_line_data['abs_time'], chosen_line_data['lat'], chosen_line_data['lon'])) if latitude is not None and longitude is not None]
+                
+                if valid_point_coords:
+                    point_options = {idx: f"Time: {abs_time} (Lat: {latitude:.5f}, Lon: {longitude:.5f})" for idx, abs_time, latitude, longitude in valid_point_coords}
+                    selected_point_idx = st.selectbox(
+                        "Select Logged Telemetry Point", 
+                        options=list(point_options.keys()), 
+                        format_func=lambda idx: point_options[idx],
+                        key="keyboard_point_selector"
+                    )
+                    
+                    final_lat = chosen_line_data['lat'][selected_point_idx]
+                    final_lon = chosen_line_data['lon'][selected_point_idx]
+                    
+                    st.success(
+                        f"📍 **Coordinates Resolved:** "
+                        f"[**Click here to view this location in Google Maps**]"
+                        f"(https://www.google.com/maps/search/?api=1&query={final_lat},{final_lon})"
+                    )
+                else:
+                    st.info("No geospatial records are available for this specific run.")
+
         render_recalibration_section("spaghetti")
 
 with tab_stats:
