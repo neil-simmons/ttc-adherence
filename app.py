@@ -1891,7 +1891,7 @@ The **target percentile** controls how conservative the new schedule is:
         help="GTFS-format stop_times.txt with suggested adjusted schedule. Not a complete GTFS feed — reference only."
     )
 
-    st.caption("⚠️ Verify against additional date ranges before operational use. When 'Align to First Observed Stop' mode was active, adjustments incorporate actual departure timing rather than pure GTFS-scheduled departure.")
+    st.caption("When 'Align to First Observed Stop' mode was active, adjustments incorporate actual departure timing rather than pure GTFS-scheduled departure.")
 
 # ==============================================================================
 # 7. MAIN UI & TAB LAYOUT
