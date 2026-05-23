@@ -268,7 +268,7 @@ def inject_legend_anchors(stops_df, segments_df):
 
 def generate_kepler_config():
     # Dynamic toggle logic for color scheme
-    if st.session_state.get('color_theme', 'Default (Classic Red-Green)') == "Accessible (Colorblind-Safe)":
+    if st.session_state.get('color_theme', 'Default (Classic Red-Green)') == "Accessible":
         # Colorblind-safe diverging sequential blue-to-yellow palette
         custom_20_colors = [
             "#053061", "#1e538d", "#3676b9", "#5298c8", "#78b9d6",
