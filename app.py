@@ -575,10 +575,8 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
         group['official_dist_km'] = group['official_dist_km'].cummax()
         group = group.drop_duplicates(subset=['official_dist_km'], keep='first')
 
-        # Filter points specifically to the selected corridor range
-        group = group[(group['official_dist_km'] >= min_dist) & (group['official_dist_km'] <= max_dist)].copy()
-        if len(group) < 2: continue
-
+        # Interpolate BEFORE filtering to the corridor range! 
+        # This prevents the boundary stops from returning NaN when the closest exterior ping is trimmed off.
         interpolated_times = np.interp(st_filtered['shape_dist_traveled'].values, group['official_dist_km'].values, group['op_seconds'].values, left=np.nan, right=np.nan)
         run_interpolations = {sid: t for sid, t in zip(st_filtered['stop_id'], interpolated_times) if not np.isnan(t)}
         if not run_interpolations: continue
@@ -611,15 +609,20 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
             group['prev_speed_kmh'] = np.where(time_diff > 0, (dist_diff / time_diff) * 3600, 0).clip(min=0)
             group['relative_min'] = (group['op_seconds'] - anchor_sec) / 60.0
 
-            # Trace sequence and inject None element where sequential pings break tracking bounds
-            raw_x = group['relative_min'].tolist()
-            raw_y = group['official_dist_km'].tolist()
-            raw_lat = group['latitude'].tolist()
-            raw_lon = group['longitude'].tolist()
-            raw_speed = group['prev_speed_kmh'].tolist()
-            raw_systime = group['system_time'].tolist()
+            # Filter points specifically to the selected corridor range for visual plotting
+            # Add a tiny 0.1km buffer so lines connect smoothly to the first and last stops
+            plot_group = group[(group['official_dist_km'] >= min_dist - 0.1) & (group['official_dist_km'] <= max_dist + 0.1)].copy()
+            if len(plot_group) < 2: continue
 
-            raw_abs = (pd.to_datetime(group['system_time'], unit='s', utc=True)
+            # Trace sequence and inject None element where sequential pings break tracking bounds
+            raw_x = plot_group['relative_min'].tolist()
+            raw_y = plot_group['official_dist_km'].tolist()
+            raw_lat = plot_group['latitude'].tolist()
+            raw_lon = plot_group['longitude'].tolist()
+            raw_speed = plot_group['prev_speed_kmh'].tolist()
+            raw_systime = plot_group['system_time'].tolist()
+
+            raw_abs = (pd.to_datetime(plot_group['system_time'], unit='s', utc=True)
                        .dt.tz_convert('America/Toronto')
                        .dt.strftime('%I:%M:%S %p').tolist())
 
