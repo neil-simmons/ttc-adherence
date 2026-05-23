@@ -1305,7 +1305,15 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
         st.checkbox("Align to First Observed Stop (Override GTFS Start)", key="force_t0", disabled=f_disabled, help="Calculates relative delays by anchoring t=0 at the first physical GPS ping at the origin stop, instead of the official GTFS scheduled departure. Disabled if Start Stop is not the true route origin.")
         
         if not adv_mode and len(filtered_headsigns) > 0 and st.session_state.signatures_loaded and st.session_state.signature_list:
-            available_tids = st.session_state.signature_list[selected_sig_idx]['t_ids']
+            # Combine trip IDs across all selected signature indices
+            if 'selected_sig_indices' in locals() and selected_sig_indices:
+                available_tids = []
+                for idx in selected_sig_indices:
+                    available_tids.extend(st.session_state.signature_list[idx]['t_ids'])
+                available_tids = sorted(list(set(available_tids)))
+            else:
+                available_tids = []
+
             st.multiselect("Isolate Specific Trip IDs", options=available_tids, key="isolated_trips", help="Explicitly filter the analysis to only process these scheduled trips.")
 
     st.markdown("<br>", unsafe_allow_html=True)
