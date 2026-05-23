@@ -759,7 +759,7 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
     raw_data = run_tracking(df_hist_raw, trip_list, s2_vars, stop_times, stops, gtfs_route_trips, shapes)
     
     if not raw_data:
-        st.error("After filtering for valid trips, none were found. This may occur from construction, deadheading. Tracking may have also failed.")
+        st.error("After filtering for valid trips, none were found. This may occur from construction, deadheading or other variables. Tracking may have also failed.")
         return False
 
     t_str = f"Route {selected_route} {selected_dir} | {s2_vars['sig_desc']} | {s2_vars['days_summary']} | {s2_vars['time_range_str']} | Mode: {s2_vars['time_mode']} | Window: {s2_vars['window_early']}s to +{s2_vars['window_late']}s"
