@@ -577,7 +577,26 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
 
         # Interpolate BEFORE filtering to the corridor range! 
         # This prevents the boundary stops from returning NaN when the closest exterior ping is trimmed off.
-        interpolated_times = np.interp(st_filtered['shape_dist_traveled'].values, group['official_dist_km'].values, group['op_seconds'].values, left=np.nan, right=np.nan)
+        
+        # --- NEW VECTORIZED GAP FILTERING ---
+        stop_dists = st_filtered['shape_dist_traveled'].values
+        ping_dists = group['official_dist_km'].values
+        ping_times = group['op_seconds'].values
+        
+        # 1. Base mathematical interpolation
+        interpolated_times = np.interp(stop_dists, ping_dists, ping_times, left=np.nan, right=np.nan)
+        
+        # 2. Find indices of raw pings immediately surrounding each stop
+        idx_after = np.searchsorted(ping_dists, stop_dists)
+        idx_after = np.clip(idx_after, 1, len(ping_dists) - 1) # Prevent index out of bounds
+        
+        # 3. Calculate the actual time gap (in seconds) between the two bounding pings
+        gaps = ping_times[idx_after] - ping_times[idx_after - 1]
+        
+        # 4. Nullify the interpolation if the gap exceeds the 120-second threshold
+        interpolated_times = np.where(gaps > MAX_ALLOWED_PING_GAP_SEC, np.nan, interpolated_times)
+        # ------------------------------------
+
         run_interpolations = {sid: t for sid, t in zip(st_filtered['stop_id'], interpolated_times) if not np.isnan(t)}
         if not run_interpolations: continue
 
