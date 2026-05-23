@@ -2533,7 +2533,7 @@ with tab_analytics:
                     crs=LATLON_PROJ
                 )
                 joined = gpd.sjoin(
-                    stops_gdf[['stop_name','route_id','reliability']],
+                    stops_gdf[['stop_name','route_id','reliability','geometry']],
                     equity_gdf[['area_name', selected_field, 'geometry']],
                     how='left', predicate='within'
                 )
