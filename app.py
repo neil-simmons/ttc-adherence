@@ -1738,13 +1738,17 @@ def build_equity_scatter(stops_df, equity_gdf, equity_field, metric_label):
     for i, route in enumerate(unique_routes):
         color = WCAG_ROUTE_COLORS[i % len(WCAG_ROUTE_COLORS)]
         route_data = joined[joined['route_id'].astype(str) == route]
+        
+        # Format legend nicely (avoiding "Route Streetcar Network" redundancy)
+        legend_name = route if "Network" in str(route) else f"Route {route}"
+        
         fig.add_trace(go.Scatter(
             x=route_data[equity_field], y=route_data['reliability'],
-            mode='markers', name=f"Route {route}",
+            mode='markers', name=legend_name,
             marker=dict(
                 size=12, 
                 color=color, 
-                symbol="circle",  # Changed all point shapes to standard circles
+                symbol="circle", 
                 opacity=0.80, 
                 line=dict(width=1.0, color='#FFFFFF')
             ),
@@ -2206,7 +2210,7 @@ with tab_analytics:
     trip_stats   = (st.session_state.raw_pipeline_data.get('trip_stats')
                     if has_analysis and st.session_state.raw_pipeline_data else None)
 
-    # Attempt to load data for the Equity chart (Custom Analysis OR Precomputed Network)
+    # Load data for the Equity chart (Custom Analysis OR Precomputed Network)
     active_equity_stops = None
     if has_analysis:
         active_equity_stops = st.session_state.analysis_results['stops_df']
@@ -2214,32 +2218,8 @@ with tab_analytics:
         pre_network = load_precomputed_network()
         if pre_network:
             active_equity_stops = pd.DataFrame(pre_network['stops'])
-            
-            # Map stop_id to route_id using relational GTFS files
-            if 'route_id' not in active_equity_stops.columns:
-                try:
-                    st_subset = stop_times[['stop_id', 'trip_id']].drop_duplicates()
-                    tr_subset = trips[['trip_id', 'route_id']].drop_duplicates()
-                    st_tr_merged = pd.merge(st_subset, tr_subset, on='trip_id', how='inner')
-                    
-                    # Convert keys to standard string formats
-                    st_tr_merged['stop_id'] = st_tr_merged['stop_id'].astype(str)
-                    st_tr_merged['route_id'] = st_tr_merged['route_id'].astype(str)
-                    
-                    # STRICT FILTER: Only allow 500-series Toronto Streetcar routes (e.g., 501-512)
-                    st_tr_merged = st_tr_merged[st_tr_merged['route_id'].str.match(r'^5\d{2}$', na=False)]
-                    
-                    # Aggregate mapping dictionary (first observed streetcar route per stop)
-                    route_mapping = st_tr_merged.groupby('stop_id')['route_id'].first().to_dict()
-                    
-                    active_equity_stops['stop_id_str'] = active_equity_stops['stop_id'].astype(str)
-                    active_equity_stops['route_id'] = active_equity_stops['stop_id_str'].map(route_mapping).fillna("Unknown")
-                    active_equity_stops.drop(columns=['stop_id_str'], inplace=True)
-                    
-                    # Remove any stops that cannot be resolved to a streetcar line
-                    active_equity_stops = active_equity_stops[active_equity_stops['route_id'] != "Unknown"]
-                except Exception:
-                    active_equity_stops['route_id'] = "Unknown"
+            # Treat all stops uniformly under a single network-wide category
+            active_equity_stops['route_id'] = "Streetcar Network"
 
     # ── SECTION 1: TEMPORAL PATTERNS ──────────────────────────────────────
     st.markdown("### ⏱️ Temporal Patterns")
