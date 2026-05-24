@@ -25,9 +25,7 @@ Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/) with 
 (`Docker Desktop → Settings → General → Use containerd for pulling and storing images`).
 
 ```bash
-docker run -it -p 7860:7860 --platform=linux/amd64 \
-  registry.hf.space/neil-simmons-ttc-schedulewatch:latest \
-  streamlit run app.py
+docker run -it -p 7860:8501 --platform=linux/amd64 registry.hf.space/neil-simmons-ttc-schedulewatch:latest streamlit run app.py
 ```
 
 ***Then open*** **http://localhost:7860** in your browser. NOT http://localhost:8501
