@@ -2168,7 +2168,7 @@ with tab_charts:
                 else:
                     gmaps_link_container.caption("👉 Click any data point on the chart to generate a Google Maps link for that exact location.")
 
-                st.info(f"Trips with missing lines between points reflect periods where GPS ping frequency was under {MAX_ALLOWED_PING_GAP_SEC}. These periods are left out in calculations. Can be changed in advanced filters.")
+                st.info(f"Trips with missing lines between points reflect periods where GPS ping frequency was under {MAX_ALLOWED_PING_GAP_SEC} seconds. These periods are left out in calculations. Can be changed in advanced filters.")
                 # ---------------------------------------------------------------------
                 # ADDITIVE KEYBOARD-ACCESSIBLE GOOGLE MAPS LINK LOOKUP alternative
                 # ---------------------------------------------------------------------
@@ -2234,6 +2234,85 @@ with tab_charts:
                     # Treat all stops uniformly under a single network-wide category
                     active_equity_stops['route_id'] = "Streetcar Network"
 
+            # ── SECTION 3: EQUITY ─────────────────────────────────────────────────
+            st.markdown("### 🏘️ Equity Analysis")
+
+            try:
+                equity_gdf     = load_equity_data()
+                equity_available = (equity_gdf is not None and not equity_gdf.empty)
+            except Exception:
+                equity_available = False
+
+            if not equity_available:
+                st.info(
+                    "🏘️ **Equity data is not available.** Upload "
+                    "`equity_neighbourhoods.geojson` to the HuggingFace repository "
+                    "to enable this section. See the Route Reliability Map tab for "
+                    "upload instructions."
+                )
+            elif active_equity_stops is None:
+                st.info(
+                    "🏘️ **No reliability data available.** Run an analysis or allow the default network to load to enable the equity scatter chart."
+                )
+            else:
+                if not has_analysis:
+                    st.info("📈 **Showing Network-Wide Equity Analysis.** This view uses precomputed reliability data for the entire streetcar network. For detailed Temporal and Space-Time charts, please run a custom analysis for a specific route.")
+                
+                EQUITY_METRIC_OPTIONS = {
+                    "Median Household Income ($)":          "median_income",
+                    "Low-Income Households (%)":            "low_income_pct",
+                    "Transit Commuters (%)":                "transit_commute_pct",
+                    "Visible Minority Population (%)":      "visible_minority_pct",
+                    "Recent Immigrants — Last 5 Yrs (%)":   "recent_immigrant_pct",
+                    "Seniors 65+ (%)":                      "senior_pct",
+                }
+
+                st.caption(
+                    "Each dot represents one stop, plotted against the equity indicator "
+                    "for the neighbourhood it falls within. Dots are colour-coded and "
+                    "shape-coded by route — both visual channels are used so the chart "
+                    "remains readable for users with colour vision differences."
+                )
+
+                selected_label = st.selectbox(
+                    "Equity metric to compare against stop reliability:",
+                    options = list(EQUITY_METRIC_OPTIONS.keys()),
+                    key     = "equity_metric_select"
+                )
+                selected_field = EQUITY_METRIC_OPTIONS[selected_label]
+
+                stops_clean = active_equity_stops[active_equity_stops['stop_lat'].notna()].copy()
+
+                fig_eq = build_equity_scatter(
+                    stops_clean, equity_gdf, selected_field, selected_label
+                )
+                st.plotly_chart(fig_eq, use_container_width=True, config=PLOTLY_CONFIG, key="chart_equity")
+                announce_sr(
+                    f"Equity scatter chart rendered: stop reliability versus "
+                    f"{selected_label}."
+                )
+                
+                with st.expander("📋 View data as accessible table", expanded=False):
+                    st.caption(f"Accessible data table for Equity Scatter ({selected_label})")
+                    stops_gdf = gpd.GeoDataFrame(
+                        stops_clean.copy(),
+                        geometry=gpd.points_from_xy(stops_clean['stop_lon'], stops_clean['stop_lat']),
+                        crs=LATLON_PROJ
+                    )
+                    joined = gpd.sjoin(
+                        stops_gdf[['stop_name','route_id','reliability','geometry']],
+                        equity_gdf[['area_name', selected_field, 'geometry']],
+                        how='left', predicate='within'
+                    )
+                    joined = joined.dropna(subset=[selected_field, 'reliability']).sort_values('reliability')
+                    joined = joined.rename(columns={
+                        'stop_name': 'Stop Name', 'route_id': 'Route',
+                        'area_name': 'Neighbourhood', selected_field: selected_label,
+                        'reliability': 'Reliability (%)'
+                    })
+                    st.write(f"Showing {len(joined)} joined stops.")
+                    st.dataframe(joined[['Stop Name', 'Route', 'Neighbourhood', selected_label, 'Reliability (%)']], hide_index=True)
+                    
             # ── SECTION 1: TEMPORAL PATTERNS ──────────────────────────────────────
             st.markdown("### ⏱️ Temporal Patterns")
             
@@ -2495,85 +2574,6 @@ with tab_charts:
                         )
 
             st.markdown("---")
-
-            # ── SECTION 3: EQUITY ─────────────────────────────────────────────────
-            st.markdown("### 🏘️ Equity Analysis")
-
-            try:
-                equity_gdf     = load_equity_data()
-                equity_available = (equity_gdf is not None and not equity_gdf.empty)
-            except Exception:
-                equity_available = False
-
-            if not equity_available:
-                st.info(
-                    "🏘️ **Equity data is not available.** Upload "
-                    "`equity_neighbourhoods.geojson` to the HuggingFace repository "
-                    "to enable this section. See the Route Reliability Map tab for "
-                    "upload instructions."
-                )
-            elif active_equity_stops is None:
-                st.info(
-                    "🏘️ **No reliability data available.** Run an analysis or allow the default network to load to enable the equity scatter chart."
-                )
-            else:
-                if not has_analysis:
-                    st.info("📈 **Showing Network-Wide Equity Analysis.** This view uses precomputed reliability data for the entire streetcar network. For detailed Temporal and Space-Time charts, please run a custom analysis for a specific route.")
-                
-                EQUITY_METRIC_OPTIONS = {
-                    "Median Household Income ($)":          "median_income",
-                    "Low-Income Households (%)":            "low_income_pct",
-                    "Transit Commuters (%)":                "transit_commute_pct",
-                    "Visible Minority Population (%)":      "visible_minority_pct",
-                    "Recent Immigrants — Last 5 Yrs (%)":   "recent_immigrant_pct",
-                    "Seniors 65+ (%)":                      "senior_pct",
-                }
-
-                st.caption(
-                    "Each dot represents one stop, plotted against the equity indicator "
-                    "for the neighbourhood it falls within. Dots are colour-coded and "
-                    "shape-coded by route — both visual channels are used so the chart "
-                    "remains readable for users with colour vision differences."
-                )
-
-                selected_label = st.selectbox(
-                    "Equity metric to compare against stop reliability:",
-                    options = list(EQUITY_METRIC_OPTIONS.keys()),
-                    key     = "equity_metric_select"
-                )
-                selected_field = EQUITY_METRIC_OPTIONS[selected_label]
-
-                stops_clean = active_equity_stops[active_equity_stops['stop_lat'].notna()].copy()
-
-                fig_eq = build_equity_scatter(
-                    stops_clean, equity_gdf, selected_field, selected_label
-                )
-                st.plotly_chart(fig_eq, use_container_width=True, config=PLOTLY_CONFIG, key="chart_equity")
-                announce_sr(
-                    f"Equity scatter chart rendered: stop reliability versus "
-                    f"{selected_label}."
-                )
-                
-                with st.expander("📋 View data as accessible table", expanded=False):
-                    st.caption(f"Accessible data table for Equity Scatter ({selected_label})")
-                    stops_gdf = gpd.GeoDataFrame(
-                        stops_clean.copy(),
-                        geometry=gpd.points_from_xy(stops_clean['stop_lon'], stops_clean['stop_lat']),
-                        crs=LATLON_PROJ
-                    )
-                    joined = gpd.sjoin(
-                        stops_gdf[['stop_name','route_id','reliability','geometry']],
-                        equity_gdf[['area_name', selected_field, 'geometry']],
-                        how='left', predicate='within'
-                    )
-                    joined = joined.dropna(subset=[selected_field, 'reliability']).sort_values('reliability')
-                    joined = joined.rename(columns={
-                        'stop_name': 'Stop Name', 'route_id': 'Route',
-                        'area_name': 'Neighbourhood', selected_field: selected_label,
-                        'reliability': 'Reliability (%)'
-                    })
-                    st.write(f"Showing {len(joined)} joined stops.")
-                    st.dataframe(joined[['Stop Name', 'Route', 'Neighbourhood', selected_label, 'Reliability (%)']], hide_index=True)
                     
     render_charts_tab()
 
