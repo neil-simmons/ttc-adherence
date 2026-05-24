@@ -18,23 +18,6 @@ import pyarrow.compute as pc
 import pyarrow as pa
 import pyarrow.dataset as ds
 import warnings
-# ==============================================================================
-# TEMPORARY: VIEW ACTIVE HUGGING FACE VERSIONS
-# ==============================================================================
-import os
-
-st.title("Hugging Face Active Packages")
-if os.path.exists("/pipfreeze/freeze.txt"):
-    with open("/pipfreeze/freeze.txt", "r") as f:
-        st.code(f.read(), language="text")
-else:
-    st.warning("Locked freeze.txt file not found. Running dynamic fallback...")
-    import subprocess
-    import sys
-    output = subprocess.check_output([sys.executable, "-m", "pip", "freeze"]).decode("utf-8")
-    st.code(output, language="text")
-st.markdown("---")
-
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
