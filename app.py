@@ -91,9 +91,6 @@ DOW_LABELS = [
     'Friday', 'Saturday', 'Sunday'
 ]
 
-# Okabe-Ito derived palette. All colours verified ≥ 3:1 contrast vs white
-# (WCAG 2.1 AA for graphical UI components). Each route gets both a unique
-# colour AND a unique marker shape so colour is never the sole differentiator.
 WCAG_ROUTE_COLORS = [
     "#0072B2",  # Blue        4.71:1
     "#D55E00",  # Vermillion  4.65:1
@@ -104,10 +101,7 @@ WCAG_ROUTE_COLORS = [
     "#C0392B",  # Dark red    5.52:1
     "#2C3E50",  # Slate       13.1:1
 ]
-WCAG_ROUTE_SHAPES = [
-    "circle", "square", "diamond", "triangle-up",
-    "cross",  "star",   "hexagon", "pentagon",
-]
+
 
 # Additive Screen-Reader Announcement Utility
 def announce_sr(text):
@@ -299,7 +293,7 @@ def inject_legend_anchors(stops_df, segments_df):
 def generate_kepler_config():
     # Dynamic toggle logic for color scheme
     if st.session_state.get('color_theme', 'Default (Classic Red-Green)') == "Accessible":
-        # Colorblind-safe diverging sequential blue-to-yellow palette
+        # diverging sequential blue-to-yellow palette
         custom_20_colors = [
             "#053061", "#1e538d", "#3676b9", "#5298c8", "#78b9d6",
             "#a4dae8", "#cef1f5", "#ebf7f5", "#fdfae5", "#fef1be",
@@ -370,7 +364,7 @@ def generate_kepler_config():
     }
 
 def generate_equity_kepler_config():
-    if st.session_state.get('color_theme', 'Default (Classic Red-Green)') == "Accessible (Colorblind-Safe)":
+    if st.session_state.get('color_theme', 'Default (Classic Red-Green)') == "Accessible":
         custom_20_colors = [
             "#053061", "#1e538d", "#3676b9", "#5298c8", "#78b9d6",
             "#a4dae8", "#cef1f5", "#ebf7f5", "#fdfae5", "#fef1be",
@@ -1934,7 +1928,7 @@ with tab_map:
         # Additive Map-Specific Accessibility Toggle
         st.selectbox(
             "👁️ Map Color Theme",
-            options=["Default (Classic Red-Green)", "Accessible (Colorblind-Safe)"],
+            options=["Default (Classic Red-Green)", "Accessible"],
             key="color_theme",
         )
         
