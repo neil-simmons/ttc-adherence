@@ -2162,7 +2162,7 @@ with tab_charts:
                 else:
                     gmaps_link_container.caption("👉 Click any data point on the chart to generate a Google Maps link for that exact location.")
 
-                st.info(f"Trips with missing lines between points reflect periods where GPS ping frequency was under {MAX_ALLOWED_PING_GAP_SEC} seconds. These periods are left out in calculations. Can be changed in advanced filters.")
+                st.info(f"Trips with missing lines between points reflect periods where GPS ping frequency was under {MAX_ALLOWED_PING_GAP_SEC} seconds. These periods are left out in calculations.")
                 # ---------------------------------------------------------------------
                 # ADDITIVE KEYBOARD-ACCESSIBLE GOOGLE MAPS LINK LOOKUP alternative
                 # ---------------------------------------------------------------------
