@@ -32,7 +32,7 @@ docker run -it -p 7860:7860 --platform=linux/amd64 \
 
 Then open **http://localhost:7860** in your browser.
 
-This runs the exact container deployed on HuggingFace Spaces — no additional configuration required.
+This runs the exact container deployed on HuggingFace Spaces with no additional configuration required.
 
 ---
 
