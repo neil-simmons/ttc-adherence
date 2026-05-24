@@ -19,7 +19,7 @@ If you need to run the project locally, choose one of the two options below.
 
 ---
 
-### Option A — Docker (Recommended)
+### Option A — Docker
 
 Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/) with the **containerd image store** enabled
 (`Docker Desktop → Settings → General → Use containerd for pulling and storing images`).
