@@ -1895,7 +1895,7 @@ The **target percentile** controls how conservative the new schedule is:
 # 7. MAIN UI & TAB LAYOUT
 # ==============================================================================
 st.title("TTC ScheduleWatch")
-st.caption("Open-data analysis tool of TTC streetcar performance versus published schedules (GTFS). Visualizes streetcar locations between March 15 - May 2 2026")
+st.caption("Open-data analysis tool of TTC streetcar performance versus published schedules (GTFS). Visualizes streetcar locations between March 15 - May 2 2026. This website is not affiliated with the TTC. ")
 
 parquet_path = get_parquet_path()
 available_routes = get_available_routes(parquet_path)
