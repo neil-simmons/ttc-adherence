@@ -2052,7 +2052,8 @@ with tab_map:
         t_stops = None
         t_segs = None
         
-        if st.session_state.analysis_results is not None and not st.session_state.analysis_results.get('is_multi', False):
+        # Changed: Remove the 'is_multi' restriction so any active custom analysis (single or multi) is utilized
+        if st.session_state.analysis_results is not None:
             t_stops = st.session_state.analysis_results.get('stops_df')
             t_segs = st.session_state.analysis_results.get('segments_df')
         else:
