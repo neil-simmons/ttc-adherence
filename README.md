@@ -52,8 +52,8 @@ and ensure it is on your PATH before continuing.
 **2. Clone the repository**
 
 ```bash
-git clone https://github.com/[your-github-username]/[your-repo-name].git
-cd [your-repo-name]
+git clone https://github.com/neil-simmons/TTC-ScheduleWatch.git
+cd TTC-ScheduleWatch
 ```
 
 **3. Create a virtual environment using Python 3.11 explicitly**
