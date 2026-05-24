@@ -18,7 +18,36 @@ import pyarrow.compute as pc
 import pyarrow as pa
 import pyarrow.dataset as ds
 import warnings
+# ==============================================================================
+# TEMPORARY DEPENDENCY LOCKER (Remove after copying your requirements)
+# ==============================================================================
+import os
+import subprocess
 
+with st.expander("📦 Dependency Locker & requirements.txt Generator", expanded=False):
+    st.write("Below are the exact dependency versions running in this environment. Copy this text into your `requirements.txt` to lock them permanently:")
+    
+    freeze_path = "/pipfreeze/freeze.txt"
+    if os.path.exists(freeze_path):
+        try:
+            with open(freeze_path, "r") as f:
+                deps = f.read()
+        except Exception as e:
+            deps = f"Error reading Hugging Face freeze file: {e}"
+    else:
+        # Fallback to run locally on your machine
+        try:
+            deps = subprocess.check_output(["pip", "freeze"]).decode("utf-8")
+        except Exception as e:
+            deps = f"Error running local pip freeze: {e}"
+            
+    st.code(deps, language="text")
+    st.download_button(
+        label="⬇️ Download locked requirements.txt", 
+        data=deps, 
+        file_name="requirements.txt",
+        mime="text/plain"
+    )
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 # ==============================================================================
