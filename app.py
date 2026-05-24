@@ -2155,7 +2155,8 @@ with tab_spaghetti:
                 gmaps_link_container.info("Click a specific coordinate point on a trip line to get a Google Maps link.")
         else:
             gmaps_link_container.caption("👉 Click any data point on the chart to generate a Google Maps link for that exact location.")
-            
+
+        st.info(f"Trips with missing lines between points reflect periods where GPS ping frequency was under {MAX_ALLOWED_PING_GAP_SEC}. These periods are left out in calculations. Can be changed in advanced filters.")
         # ---------------------------------------------------------------------
         # ADDITIVE KEYBOARD-ACCESSIBLE GOOGLE MAPS LINK LOOKUP alternative
         # ---------------------------------------------------------------------
