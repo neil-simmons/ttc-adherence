@@ -30,7 +30,7 @@ docker run -it -p 7860:7860 --platform=linux/amd64 \
   streamlit run app.py
 ```
 
-Then open **http://localhost:7860** in your browser.
+***Then open*** **http://localhost:7860** in your browser. NOT http://localhost:8501
 
 This runs the exact container deployed on HuggingFace Spaces with no additional configuration required.
 
