@@ -1923,121 +1923,122 @@ if st.session_state.show_settings:
 if st.session_state.analysis_results is not None and not st.session_state.analysis_results.get('is_multi', False):
     render_insights_panel(st.session_state.raw_pipeline_data, st.session_state.analysis_results)
 
-tab_map, tab_spaghetti, tab_stats, tab_analytics, tab_recal = st.tabs([
+# Consolidate top-level to 3 isolated zones
+tab_map, tab_charts, tab_recal = st.tabs([
     "🗺️ Route Reliability Map",
-    "🍝 Time-Distance Chart",
-    "📊 Density Chart",
-    "📈 Analytics",
+    "📈 Charts & Analytics",
     "📅 Schedule Recalibration",
 ])
 
 with tab_map:
-    # Additive Map-Specific Accessibility Toggle
-    st.selectbox(
-        "👁️ Map Color Theme",
-        options=["Default (Classic Red-Green)", "Accessible (Colorblind-Safe)"],
-        key="color_theme",
-    )
-    
-    if not st.session_state.analysis_results:
-        precomputed = load_precomputed_network()
-        if precomputed:
-            st.info("🗺️ **Showing Default Network Reliability View.** All-Day Weekdays, All Routes. Click the **⚙️ Open Filter & Analysis Settings** button above to run a custom analysis.")
-            stops_df = pd.DataFrame(precomputed['stops'])
-            segments_df = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
-            
-            # Inject anchors so the landing page colors lock to 0% - 100%
-            stops_df, segments_df = inject_legend_anchors(stops_df, segments_df)
-            
-            # Calls generate_kepler_config dynamically to apply theme changes instantly
-            map_instance = KeplerGl(height=600, data={"stops": stops_df, "segments": segments_df}, config=generate_kepler_config())
-            keplergl_static(map_instance, center_map=True)
-        else:
-            st.info("🗺️ **Map View is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
-    else:
-        st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
-        results = st.session_state.analysis_results
-        if 'segments_df' in results and not results['segments_df'].empty:
-            # Calls generate_kepler_config dynamically instead of using the static saved version
-            map_instance = KeplerGl(height=600, data={"stops": results['stops_df'], "segments": results['segments_df']}, config=generate_kepler_config())
-            keplergl_static(map_instance, center_map=True)
-        else:
-            st.warning("Spatial geometry could not be built for this route.")
-
-    # -------------------------------------------------------------------------
-    # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR PRECOMPUTED AND CUSTOM MAPS
-    # -------------------------------------------------------------------------
-    active_stops_df = None
-    active_segments_df = None
-    is_custom = False
-
-    if st.session_state.analysis_results:
-        active_stops_df = st.session_state.analysis_results.get('stops_df')
-        active_segments_df = st.session_state.analysis_results.get('segments_df')
-        is_custom = True
-    else:
-        pre_network = load_precomputed_network()
-        if pre_network:
-            active_stops_df = pd.DataFrame(pre_network['stops'])
-            active_segments_df = gpd.GeoDataFrame.from_features(pre_network['segments']['features'])
-
-    if active_stops_df is not None and not active_stops_df.empty:
-        st.markdown("<br>", unsafe_allow_html=True)
-        with st.expander("📊 View Map Stops and Segments as an Accessible Table", expanded=False):
-            st.caption("This collapsible data table acts as an accessible, high-contrast text alternative to the visual map representation above, supporting both screen readers and keyboard navigation.")
-            if is_custom:
-                st.caption("Showing performance statistics for the currently calculated route analysis.")
-            else:
-                st.caption("Showing default network overview statistics.")
-            
-            # Filter out non-geographic anchor legends
-            clean_display_stops = active_stops_df[active_stops_df['stop_lat'].notna()].copy()
-            if 'stop_name' in clean_display_stops.columns:
-                # Ensure the full, untruncated stop name is presented to prevent informational loss
-                clean_display_stops['stop_name'] = clean_display_stops['stop_name'].astype(str)
-
-            st.markdown("##### Route Stops")
-            
-            # Safe column check: only show 'sample_size' if it exists in the active dataset
-            stop_cols_to_show = [col for col in ['stop_name', 'reliability', 'sample_size'] if col in clean_display_stops.columns]
-            
-            st.dataframe(
-                clean_display_stops[stop_cols_to_show],
-                column_config={
-                    'stop_name': st.column_config.TextColumn("Stop Station Name"),
-                    'reliability': st.column_config.NumberColumn("On-Time Reliability Rate", format="%.1f%%"),
-                    'sample_size': st.column_config.NumberColumn("Measured Runs (Sample Size)", format="%d")
-                },
-                use_container_width=True,
-                hide_index=True
-            )
-
-            if active_segments_df is not None and not active_segments_df.empty:
-                st.markdown("##### Corridor Segments")
-                display_segs = pd.DataFrame(active_segments_df).copy()
-                if 'geometry' in display_segs.columns:
-                    display_segs = display_segs.drop(columns=['geometry'])
+    @st.fragment
+    def render_map_tab():
+        # Additive Map-Specific Accessibility Toggle
+        st.selectbox(
+            "👁️ Map Color Theme",
+            options=["Default (Classic Red-Green)", "Accessible (Colorblind-Safe)"],
+            key="color_theme",
+        )
+        
+        if not st.session_state.analysis_results:
+            precomputed = load_precomputed_network()
+            if precomputed:
+                st.info("🗺️ **Showing Default Network Reliability View.** All-Day Weekdays, All Routes. Click the **⚙️ Open Filter & Analysis Settings** button above to run a custom analysis.")
+                stops_df = pd.DataFrame(precomputed['stops'])
+                segments_df = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
                 
-                # Safe column check: prevents KeyError when 'sample_size' is missing in precomputed JSON
-                seg_cols_to_show = [col for col in ['segment', 'avg_reliability', 'sample_size'] if col in display_segs.columns]
+                # Inject anchors so the landing page colors lock to 0% - 100%
+                stops_df, segments_df = inject_legend_anchors(stops_df, segments_df)
+                
+                # Calls generate_kepler_config dynamically to apply theme changes instantly
+                map_instance = KeplerGl(height=600, data={"stops": stops_df, "segments": segments_df}, config=generate_kepler_config())
+                keplergl_static(map_instance, center_map=True)
+            else:
+                st.info("🗺️ **Map View is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
+        else:
+            st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
+            results = st.session_state.analysis_results
+            if 'segments_df' in results and not results['segments_df'].empty:
+                # Calls generate_kepler_config dynamically instead of using the static saved version
+                map_instance = KeplerGl(height=600, data={"stops": results['stops_df'], "segments": results['segments_df']}, config=generate_kepler_config())
+                keplergl_static(map_instance, center_map=True)
+            else:
+                st.warning("Spatial geometry could not be built for this route.")
+
+        # -------------------------------------------------------------------------
+        # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR PRECOMPUTED AND CUSTOM MAPS
+        # -------------------------------------------------------------------------
+        active_stops_df = None
+        active_segments_df = None
+        is_custom = False
+
+        if st.session_state.analysis_results:
+            active_stops_df = st.session_state.analysis_results.get('stops_df')
+            active_segments_df = st.session_state.analysis_results.get('segments_df')
+            is_custom = True
+        else:
+            pre_network = load_precomputed_network()
+            if pre_network:
+                active_stops_df = pd.DataFrame(pre_network['stops'])
+                active_segments_df = gpd.GeoDataFrame.from_features(pre_network['segments']['features'])
+
+        if active_stops_df is not None and not active_stops_df.empty:
+            st.markdown("<br>", unsafe_allow_html=True)
+            with st.expander("📊 View Map Stops and Segments as an Accessible Table", expanded=False):
+                st.caption("This collapsible data table acts as an accessible, high-contrast text alternative to the visual map representation above, supporting both screen readers and keyboard navigation.")
+                if is_custom:
+                    st.caption("Showing performance statistics for the currently calculated route analysis.")
+                else:
+                    st.caption("Showing default network overview statistics.")
+                
+                # Filter out non-geographic anchor legends
+                clean_display_stops = active_stops_df[active_stops_df['stop_lat'].notna()].copy()
+                if 'stop_name' in clean_display_stops.columns:
+                    # Ensure the full, untruncated stop name is presented to prevent informational loss
+                    clean_display_stops['stop_name'] = clean_display_stops['stop_name'].astype(str)
+
+                st.markdown("##### Route Stops")
+                
+                # Safe column check: only show 'sample_size' if it exists in the active dataset
+                stop_cols_to_show = [col for col in ['stop_name', 'reliability', 'sample_size'] if col in clean_display_stops.columns]
                 
                 st.dataframe(
-                    display_segs[seg_cols_to_show],
+                    clean_display_stops[stop_cols_to_show],
                     column_config={
-                        'segment': st.column_config.TextColumn("Inter-Stop Route Segment"),
-                        'avg_reliability': st.column_config.NumberColumn("Average Corridor Segment Reliability", format="%.1f%%"),
-                        'sample_size': st.column_config.NumberColumn("Aggregate Runs Measured", format="%d")
+                        'stop_name': st.column_config.TextColumn("Stop Station Name"),
+                        'reliability': st.column_config.NumberColumn("On-Time Reliability Rate", format="%.1f%%"),
+                        'sample_size': st.column_config.NumberColumn("Measured Runs (Sample Size)", format="%d")
                     },
                     use_container_width=True,
                     hide_index=True
                 )
 
-    st.markdown("---")
-    st.markdown("### 🏘️ Equity Context Map")
-    st.markdown("Neighbourhood-level equity indicators from Statistics Canada 2021 Census and City of Toronto Open Data, overlaid with transit reliability. **Use the layer panel (top-left of the map) to toggle between equity indicators.** Transit segments and stops reflect the current analysis if one has been run, otherwise show the all-routes precomputed network.")
-    
-    with st.expander("📖 Layer Guide", expanded=False):
-        st.markdown("""
+                if active_segments_df is not None and not active_segments_df.empty:
+                    st.markdown("##### Corridor Segments")
+                    display_segs = pd.DataFrame(active_segments_df).copy()
+                    if 'geometry' in display_segs.columns:
+                        display_segs = display_segs.drop(columns=['geometry'])
+                    
+                    # Safe column check: prevents KeyError when 'sample_size' is missing in precomputed JSON
+                    seg_cols_to_show = [col for col in ['segment', 'avg_reliability', 'sample_size'] if col in display_segs.columns]
+                    
+                    st.dataframe(
+                        display_segs[seg_cols_to_show],
+                        column_config={
+                            'segment': st.column_config.TextColumn("Inter-Stop Route Segment"),
+                            'avg_reliability': st.column_config.NumberColumn("Average Corridor Segment Reliability", format="%.1f%%"),
+                            'sample_size': st.column_config.NumberColumn("Aggregate Runs Measured", format="%d")
+                        },
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+        st.markdown("---")
+        st.markdown("### 🏘️ Equity Context Map")
+        st.markdown("Neighbourhood-level equity indicators from Statistics Canada 2021 Census and City of Toronto Open Data, overlaid with transit reliability. **Use the layer panel (top-left of the map) to toggle between equity indicators.** Transit segments and stops reflect the current analysis if one has been run, otherwise show the all-routes precomputed network.")
+        
+        with st.expander("📖 Layer Guide", expanded=False):
+            st.markdown("""
 | Layer Name | What It Shows |
 |---|---|
 | Median Household Income ($) | Neighbourhood median household income |
@@ -2047,623 +2048,639 @@ with tab_map:
 | Recent Immigrants — Last 5 Years (%) | Share who immigrated within 5 years |
 | Seniors 65+ (%) | Share of population aged 65 or older |
 """)
-    
-    equity_gdf = load_equity_data()
-    
-    t_stops = None
-    t_segs = None
-    
-    if st.session_state.analysis_results is not None and not st.session_state.analysis_results.get('is_multi', False):
-        t_stops = st.session_state.analysis_results.get('stops_df')
-        t_segs = st.session_state.analysis_results.get('segments_df')
-    else:
-        precomputed = load_precomputed_network()
-        if precomputed:
-            t_stops = pd.DataFrame(precomputed['stops'])
-            t_segs = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
-            t_stops, t_segs = inject_legend_anchors(t_stops, t_segs)
-            
-    equity_config = generate_equity_kepler_config()
-    data_dict = {"equity": equity_gdf}
-    
-    if t_stops is not None and t_segs is not None and not t_stops.empty and not t_segs.empty:
-        data_dict["stops"] = t_stops
-        data_dict["segments"] = t_segs
-    else:
-        layers = equity_config["config"]["visState"]["layers"]
-        equity_config["config"]["visState"]["layers"] = [l for l in layers if l["id"] not in ("segments", "stops")]
         
-        layer_order = equity_config["config"]["visState"]["layerOrder"]
-        equity_config["config"]["visState"]["layerOrder"] = [lo for lo in layer_order if lo not in ("segments", "stops")]
+        equity_gdf = load_equity_data()
         
-        tooltip_fields = equity_config["config"]["visState"]["interactionConfig"]["tooltip"]["fieldsToShow"]
-        if "segments" in tooltip_fields:
-            del tooltip_fields["segments"]
-        if "stops" in tooltip_fields:
-            del tooltip_fields["stops"]
-            
-    equity_map = KeplerGl(height=650, data=data_dict, config=equity_config)
-    keplergl_static(equity_map, center_map=True)
-
-    # -------------------------------------------------------------------------
-    # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR CENSUS NEIGHBOURHOOD EQUITY DATA
-    # -------------------------------------------------------------------------
-    if equity_gdf is not None and not equity_gdf.empty:
-        st.markdown("<br>", unsafe_allow_html=True)
-        with st.expander("🏘️ View Neighbourhood Census Equity Metrics as an Accessible Table", expanded=False):
-            st.caption("This collapsible database lists Statistics Canada 2021 Census equity indicators across municipal neighbourhoods, serving as an accessible high-contrast text alternative to the multi-layered visual map above.")
-            
-            display_equity = pd.DataFrame(equity_gdf).copy()
-            if 'geometry' in display_equity.columns:
-                display_equity = display_equity.drop(columns=['geometry'])
-            
-            display_equity = display_equity.sort_values('area_name')
-            st.dataframe(
-                display_equity[[
-                    'area_name', 'median_income', 'low_income_pct', 
-                    'transit_commute_pct', 'visible_minority_pct', 
-                    'recent_immigrant_pct', 'senior_pct'
-                ]],
-                column_config={
-                    'area_name': st.column_config.TextColumn("Neighbourhood Name"),
-                    'median_income': st.column_config.NumberColumn("Median Household Income", format="$%d"),
-                    'low_income_pct': st.column_config.NumberColumn("Low-Income Households", format="%.1f%%"),
-                    'transit_commute_pct': st.column_config.NumberColumn("Transit Commute share", format="%.1f%%"),
-                    'visible_minority_pct': st.column_config.NumberColumn("Visible Minority Share", format="%.1f%%"),
-                    'recent_immigrant_pct': st.column_config.NumberColumn("Recent Immigrants (Last 5 Yrs)", format="%.1f%%"),
-                    'senior_pct': st.column_config.NumberColumn("Seniors 65+", format="%.1f%%")
-                },
-                use_container_width=True,
-                hide_index=True
-            )
-    
-    st.caption("Data: Statistics Canada 2021 Census via City of Toronto Neighbourhood Profiles (open.toronto.ca). All data used under open government licence.")
-
-with tab_spaghetti:
-    if not st.session_state.analysis_results:
-        st.info("🍝 **Time-Distance Chart is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
-    elif st.session_state.analysis_results.get('is_multi', False):
-        st.warning("⚠️ **Charts Disabled.** Detailed trip visualizations are only available when analyzing a single route.")
-    else:
-        st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
+        t_stops = None
+        t_segs = None
         
-        gmaps_link_container = st.empty()
-        
-        event = st.plotly_chart(
-            st.session_state.analysis_results['fig_B'],
-            use_container_width=True,
-            height=900,
-            config=PLOTLY_CONFIG,
-            on_select="rerun",
-            selection_mode=["points"]
-        )
-        
-        if event and event.selection.get("points"):
-            pt = event.selection["points"][0]
-            if "customdata" in pt and len(pt["customdata"]) >= 6:
-                op_date = pt["customdata"][0]
-                t_id = pt["customdata"][2]
-                lat = pt["customdata"][4]
-                lon = pt["customdata"][5]
+        if st.session_state.analysis_results is not None and not st.session_state.analysis_results.get('is_multi', False):
+            t_stops = st.session_state.analysis_results.get('stops_df')
+            t_segs = st.session_state.analysis_results.get('segments_df')
+        else:
+            precomputed = load_precomputed_network()
+            if precomputed:
+                t_stops = pd.DataFrame(precomputed['stops'])
+                t_segs = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
+                t_stops, t_segs = inject_legend_anchors(t_stops, t_segs)
                 
-                gmaps_link_container.success(
-                    f"📍 **Selected {op_date} | Trip {t_id}:** "
-                    f"[**Click here to open this location in Google Maps**]"
-                    f"(https://www.google.com/maps/search/?api=1&query={lat},{lon})"
+        equity_config = generate_equity_kepler_config()
+        data_dict = {"equity": equity_gdf}
+        
+        if t_stops is not None and t_segs is not None and not t_stops.empty and not t_segs.empty:
+            data_dict["stops"] = t_stops
+            data_dict["segments"] = t_segs
+        else:
+            layers = equity_config["config"]["visState"]["layers"]
+            equity_config["config"]["visState"]["layers"] = [l for l in layers if l["id"] not in ("segments", "stops")]
+            
+            layer_order = equity_config["config"]["visState"]["layerOrder"]
+            equity_config["config"]["visState"]["layerOrder"] = [lo for lo in layer_order if lo not in ("segments", "stops")]
+            
+            tooltip_fields = equity_config["config"]["visState"]["interactionConfig"]["tooltip"]["fieldsToShow"]
+            if "segments" in tooltip_fields:
+                del tooltip_fields["segments"]
+            if "stops" in tooltip_fields:
+                del tooltip_fields["stops"]
+                
+        equity_map = KeplerGl(height=650, data=data_dict, config=equity_config)
+        keplergl_static(equity_map, center_map=True)
+
+        # -------------------------------------------------------------------------
+        # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR CENSUS NEIGHBOURHOOD EQUITY DATA
+        # -------------------------------------------------------------------------
+        if equity_gdf is not None and not equity_gdf.empty:
+            st.markdown("<br>", unsafe_allow_html=True)
+            with st.expander("🏘️ View Neighbourhood Census Equity Metrics as an Accessible Table", expanded=False):
+                st.caption("This collapsible database lists Statistics Canada 2021 Census equity indicators across municipal neighbourhoods, serving as an accessible high-contrast text alternative to the multi-layered visual map above.")
+                
+                display_equity = pd.DataFrame(equity_gdf).copy()
+                if 'geometry' in display_equity.columns:
+                    display_equity = display_equity.drop(columns=['geometry'])
+                
+                display_equity = display_equity.sort_values('area_name')
+                st.dataframe(
+                    display_equity[[
+                        'area_name', 'median_income', 'low_income_pct', 
+                        'transit_commute_pct', 'visible_minority_pct', 
+                        'recent_immigrant_pct', 'senior_pct'
+                    ]],
+                    column_config={
+                        'area_name': st.column_config.TextColumn("Neighbourhood Name"),
+                        'median_income': st.column_config.NumberColumn("Median Household Income", format="$%d"),
+                        'low_income_pct': st.column_config.NumberColumn("Low-Income Households", format="%.1f%%"),
+                        'transit_commute_pct': st.column_config.NumberColumn("Transit Commute share", format="%.1f%%"),
+                        'visible_minority_pct': st.column_config.NumberColumn("Visible Minority Share", format="%.1f%%"),
+                        'recent_immigrant_pct': st.column_config.NumberColumn("Recent Immigrants (Last 5 Yrs)", format="%.1f%%"),
+                        'senior_pct': st.column_config.NumberColumn("Seniors 65+", format="%.1f%%")
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+        
+        st.caption("Data: Statistics Canada 2021 Census via City of Toronto Neighbourhood Profiles (open.toronto.ca). All data used under open government licence.")
+    
+    render_map_tab()
+
+with tab_charts:
+    @st.fragment
+    def render_charts_tab():
+        # Split the consolidated tab back up into the normal 3 separate views
+        tab_spaghetti, tab_stats, tab_analytics = st.tabs([
+            "🍝 Time-Distance Chart",
+            "📊 Density Chart",
+            "📈 Analytics",
+        ])
+
+        with tab_spaghetti:
+            if not st.session_state.analysis_results:
+                st.info("🍝 **Time-Distance Chart is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
+            elif st.session_state.analysis_results.get('is_multi', False):
+                st.warning("⚠️ **Charts Disabled.** Detailed trip visualizations are only available when analyzing a single route.")
+            else:
+                st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
+                
+                gmaps_link_container = st.empty()
+                
+                event = st.plotly_chart(
+                    st.session_state.analysis_results['fig_B'],
+                    use_container_width=True,
+                    height=900,
+                    config=PLOTLY_CONFIG,
+                    on_select="rerun",
+                    selection_mode=["points"]
+                )
+                
+                if event and event.selection.get("points"):
+                    pt = event.selection["points"][0]
+                    if "customdata" in pt and len(pt["customdata"]) >= 6:
+                        op_date = pt["customdata"][0]
+                        t_id = pt["customdata"][2]
+                        lat = pt["customdata"][4]
+                        lon = pt["customdata"][5]
+                        
+                        gmaps_link_container.success(
+                            f"📍 **Selected {op_date} | Trip {t_id}:** "
+                            f"[**Click here to open this location in Google Maps**]"
+                            f"(https://www.google.com/maps/search/?api=1&query={lat},{lon})"
+                        )
+                    else:
+                        gmaps_link_container.info("Click a specific coordinate point on a trip line to get a Google Maps link.")
+                else:
+                    gmaps_link_container.caption("👉 Click any data point on the chart to generate a Google Maps link for that exact location.")
+
+                st.info(f"Trips with missing lines between points reflect periods where GPS ping frequency was under {MAX_ALLOWED_PING_GAP_SEC}. These periods are left out in calculations. Can be changed in advanced filters.")
+                # ---------------------------------------------------------------------
+                # ADDITIVE KEYBOARD-ACCESSIBLE GOOGLE MAPS LINK LOOKUP alternative
+                # ---------------------------------------------------------------------
+                st.markdown("<br>", unsafe_allow_html=True)
+                with st.expander("⌨️ Keyboard Navigation Alternative for Spaghetti Chart Points", expanded=False):
+                    st.caption("Plotly canvas charts can be difficult to control using keyboard-only commands. Use these dropdown menus as a semantic, accessible interface to generate the exact same Google Maps links.")
+                    raw_lines = st.session_state.raw_pipeline_data.get('mode_b_lines', [])
+                    if raw_lines:
+                        line_options = {idx: f"{item['op_date']} | Trip ID: {item['t_id']} (Departed: {item['start_time']})" for idx, item in enumerate(raw_lines)}
+                        selected_line_idx = st.selectbox(
+                            "Select Target Active Run", 
+                            options=list(line_options.keys()), 
+                            format_func=lambda idx: line_options[idx],
+                            key="keyboard_run_selector"
+                        )
+                        
+                        chosen_line_data = raw_lines[selected_line_idx]
+                        valid_point_coords = [(idx, abs_time, latitude, longitude) for idx, (abs_time, latitude, longitude) in enumerate(zip(chosen_line_data['abs_time'], chosen_line_data['lat'], chosen_line_data['lon'])) if latitude is not None and longitude is not None]
+                        
+                        if valid_point_coords:
+                            point_options = {idx: f"Time: {abs_time} (Lat: {latitude:.5f}, Lon: {longitude:.5f})" for idx, abs_time, latitude, longitude in valid_point_coords}
+                            selected_point_idx = st.selectbox(
+                                "Select Logged Telemetry Point", 
+                                options=list(point_options.keys()), 
+                                format_func=lambda idx: point_options[idx],
+                                key="keyboard_point_selector"
+                            )
+                            
+                            final_lat = chosen_line_data['lat'][selected_point_idx]
+                            final_lon = chosen_line_data['lon'][selected_point_idx]
+                            
+                            st.success(
+                                f"📍 **Coordinates Resolved:** "
+                                f"[**Click here to view this location in Google Maps**]"
+                                f"(https://www.google.com/maps/search/?api=1&query={final_lat},{final_lon})"
+                            )
+                        else:
+                            st.info("No geospatial records are available for this specific run.")
+
+        with tab_stats:
+            if not st.session_state.analysis_results:
+                st.info("📊 **Density Chart is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
+            elif st.session_state.analysis_results.get('is_multi', False):
+                st.warning("⚠️ **Charts Disabled.** Detailed density plots are only available when analyzing a single route.")
+            else:
+                st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
+                st.plotly_chart(st.session_state.analysis_results['fig_A'], use_container_width=True, height=900, config=PLOTLY_CONFIG)
+
+        with tab_analytics:
+            has_analysis = st.session_state.analysis_results is not None
+            is_multi     = st.session_state.analysis_results.get('is_multi', False) if has_analysis else False
+            trip_stats   = (st.session_state.raw_pipeline_data.get('trip_stats')
+                            if has_analysis and st.session_state.raw_pipeline_data else None)
+
+            # Load data for the Equity chart (Custom Analysis OR Precomputed Network)
+            active_equity_stops = None
+            if has_analysis:
+                active_equity_stops = st.session_state.analysis_results['stops_df']
+            else:
+                pre_network = load_precomputed_network()
+                if pre_network:
+                    active_equity_stops = pd.DataFrame(pre_network['stops'])
+                    # Treat all stops uniformly under a single network-wide category
+                    active_equity_stops['route_id'] = "Streetcar Network"
+
+            # ── SECTION 1: TEMPORAL PATTERNS ──────────────────────────────────────
+            st.markdown("### ⏱️ Temporal Patterns")
+            
+            if not has_analysis or is_multi or trip_stats is None:
+                st.info(
+                    "⏱️ **Temporal pattern charts are available for single-signature analyses "
+                    "only.** Switch to single-signature mode in the settings panel above and "
+                    "re-run the analysis to access day-of-week, date trend, and departure-"
+                    "time breakdowns."
                 )
             else:
-                gmaps_link_container.info("Click a specific coordinate point on a trip line to get a Google Maps link.")
-        else:
-            gmaps_link_container.caption("👉 Click any data point on the chart to generate a Google Maps link for that exact location.")
-
-        st.info(f"Trips with missing lines between points reflect periods where GPS ping frequency was under {MAX_ALLOWED_PING_GAP_SEC}. These periods are left out in calculations. Can be changed in advanced filters.")
-        # ---------------------------------------------------------------------
-        # ADDITIVE KEYBOARD-ACCESSIBLE GOOGLE MAPS LINK LOOKUP alternative
-        # ---------------------------------------------------------------------
-        st.markdown("<br>", unsafe_allow_html=True)
-        with st.expander("⌨️ Keyboard Navigation Alternative for Spaghetti Chart Points", expanded=False):
-            st.caption("Plotly canvas charts can be difficult to control using keyboard-only commands. Use these dropdown menus as a semantic, accessible interface to generate the exact same Google Maps links.")
-            raw_lines = st.session_state.raw_pipeline_data.get('mode_b_lines', [])
-            if raw_lines:
-                line_options = {idx: f"{item['op_date']} | Trip ID: {item['t_id']} (Departed: {item['start_time']})" for idx, item in enumerate(raw_lines)}
-                selected_line_idx = st.selectbox(
-                    "Select Target Active Run", 
-                    options=list(line_options.keys()), 
-                    format_func=lambda idx: line_options[idx],
-                    key="keyboard_run_selector"
-                )
+                show_dow      = trip_stats['n_unique_dow'] >= 3
+                show_date     = trip_stats['n_unique_dates'] >= 7
+                show_dep_time = trip_stats['hour_range'] >= 0.5   # 30 minutes minimum
                 
-                chosen_line_data = raw_lines[selected_line_idx]
-                valid_point_coords = [(idx, abs_time, latitude, longitude) for idx, (abs_time, latitude, longitude) in enumerate(zip(chosen_line_data['abs_time'], chosen_line_data['lat'], chosen_line_data['lon'])) if latitude is not None and longitude is not None]
+                any_temporal  = show_dow or show_date or show_dep_time
                 
-                if valid_point_coords:
-                    point_options = {idx: f"Time: {abs_time} (Lat: {latitude:.5f}, Lon: {longitude:.5f})" for idx, abs_time, latitude, longitude in valid_point_coords}
-                    selected_point_idx = st.selectbox(
-                        "Select Logged Telemetry Point", 
-                        options=list(point_options.keys()), 
-                        format_func=lambda idx: point_options[idx],
-                        key="keyboard_point_selector"
-                    )
-                    
-                    final_lat = chosen_line_data['lat'][selected_point_idx]
-                    final_lon = chosen_line_data['lon'][selected_point_idx]
-                    
-                    st.success(
-                        f"📍 **Coordinates Resolved:** "
-                        f"[**Click here to view this location in Google Maps**]"
-                        f"(https://www.google.com/maps/search/?api=1&query={final_lat},{final_lon})"
+                if not any_temporal:
+                    st.info(
+                        "⏱️ **Temporal charts require more data variation than is present in "
+                        "this analysis.** Specifically: day-of-week distribution needs data "
+                        "from at least 3 distinct days of the week; date trend needs at least "
+                        "7 different operating dates; departure-time scatter needs at least "
+                        "30 minutes of variation in trip departure times. Broaden your day "
+                        "or time-window filters and re-run to enable these charts."
                     )
                 else:
-                    st.info("No geospatial records are available for this specific run.")
+                    if 'show_temporal' not in st.session_state:
+                        st.session_state.show_temporal = False
+                    if st.button("Generate Temporal Charts", key="btn_temporal",
+                                 help="Computes day-of-week, date trend, and departure-time charts."):
+                        st.session_state.show_temporal = True
 
-with tab_stats:
-    if not st.session_state.analysis_results:
-        st.info("📊 **Density Chart is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
-    elif st.session_state.analysis_results.get('is_multi', False):
-        st.warning("⚠️ **Charts Disabled.** Detailed density plots are only available when analyzing a single route.")
-    else:
-        st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
-        st.plotly_chart(st.session_state.analysis_results['fig_A'], use_container_width=True, height=900, config=PLOTLY_CONFIG)
+                    if st.session_state.get('show_temporal'):
+                        if show_dow:
+                            st.markdown("#### Delay by Day of Week")
+                            st.caption(
+                                "Each box shows the distribution of per-trip mean delays for that "
+                                "day. The horizontal dashed line marks the scheduled baseline (zero "
+                                "delay). Outlier points are shown individually."
+                            )
+                            fig = build_dow_chart(trip_stats)
+                            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_dow")
+                            announce_sr("Day-of-week delay distribution chart rendered.")
+                            
+                            with st.expander("📋 View data as accessible table", expanded=False):
+                                st.caption("Accessible data table for Per-Trip Mean Delay by Day of Week")
+                                data = []
+                                for d in range(7):
+                                    delays = [trip_stats['per_trip_mean_delay'][i]/60 for i, dow in enumerate(trip_stats['per_trip_dow']) if dow == d and not np.isnan(trip_stats['per_trip_mean_delay'][i])]
+                                    if len(delays) >= 3:
+                                        data.append({
+                                            "Day": DOW_LABELS[d], "N Trips": len(delays),
+                                            "Median Delay (min)": np.median(delays),
+                                            "Min (min)": np.min(delays), "Max (min)": np.max(delays)
+                                        })
+                                st.dataframe(pd.DataFrame(data), hide_index=True)
+                        else:
+                            st.info(
+                                "**Day-of-week chart unavailable.** This chart requires data from "
+                                "at least 3 distinct days of the week. Your current analysis "
+                                "covers fewer — expand the day filters in the settings panel."
+                            )
 
-with tab_analytics:
-    has_analysis = st.session_state.analysis_results is not None
-    is_multi     = st.session_state.analysis_results.get('is_multi', False) if has_analysis else False
-    trip_stats   = (st.session_state.raw_pipeline_data.get('trip_stats')
-                    if has_analysis and st.session_state.raw_pipeline_data else None)
+                        st.markdown("---")
 
-    # Load data for the Equity chart (Custom Analysis OR Precomputed Network)
-    active_equity_stops = None
-    if has_analysis:
-        active_equity_stops = st.session_state.analysis_results['stops_df']
-    else:
-        pre_network = load_precomputed_network()
-        if pre_network:
-            active_equity_stops = pd.DataFrame(pre_network['stops'])
-            # Treat all stops uniformly under a single network-wide category
-            active_equity_stops['route_id'] = "Streetcar Network"
+                        if show_date:
+                            st.markdown("#### Daily Mean Delay Over Time")
+                            st.caption(
+                                "Each point represents the mean per-trip delay across all trips "
+                                "on that operating date. The dotted blue line shows a 7-day rolling "
+                                "average when sufficient dates are available."
+                            )
+                            fig = build_date_trend_chart(trip_stats)
+                            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_date")
+                            announce_sr("Date trend chart rendered.")
+                            
+                            with st.expander("📋 View data as accessible table", expanded=False):
+                                st.caption("Accessible data table for Daily Mean Delay Over Time")
+                                date_dict = {}
+                                for d, delay in zip(trip_stats['per_trip_date'], trip_stats['per_trip_mean_delay']):
+                                    if d and not np.isnan(delay):
+                                        date_dict.setdefault(d, []).append(delay/60)
+                                data = [{"Date": d, "N Trips": len(date_dict[d]), "Mean Delay (min)": np.mean(date_dict[d])} for d in sorted(date_dict.keys())]
+                                st.dataframe(pd.DataFrame(data), hide_index=True)
+                        else:
+                            st.info(
+                                "**Date trend chart unavailable.** This chart requires at least "
+                                "7 different operating dates. Your current analysis spans fewer. "
+                                "Broaden the date range of your underlying dataset to enable this."
+                            )
 
-    # ── SECTION 1: TEMPORAL PATTERNS ──────────────────────────────────────
-    st.markdown("### ⏱️ Temporal Patterns")
-    
-    if not has_analysis or is_multi or trip_stats is None:
-        st.info(
-            "⏱️ **Temporal pattern charts are available for single-signature analyses "
-            "only.** Switch to single-signature mode in the settings panel above and "
-            "re-run the analysis to access day-of-week, date trend, and departure-"
-            "time breakdowns."
-        )
-    else:
-        show_dow      = trip_stats['n_unique_dow'] >= 3
-        show_date     = trip_stats['n_unique_dates'] >= 7
-        show_dep_time = trip_stats['hour_range'] >= 0.5   # 30 minutes minimum
-        
-        any_temporal  = show_dow or show_date or show_dep_time
-        
-        if not any_temporal:
-            st.info(
-                "⏱️ **Temporal charts require more data variation than is present in "
-                "this analysis.** Specifically: day-of-week distribution needs data "
-                "from at least 3 distinct days of the week; date trend needs at least "
-                "7 different operating dates; departure-time scatter needs at least "
-                "30 minutes of variation in trip departure times. Broaden your day "
-                "or time-window filters and re-run to enable these charts."
-            )
-        else:
-            if 'show_temporal' not in st.session_state:
-                st.session_state.show_temporal = False
-            if st.button("Generate Temporal Charts", key="btn_temporal",
-                         help="Computes day-of-week, date trend, and departure-time charts."):
-                st.session_state.show_temporal = True
+                        st.markdown("---")
 
-            if st.session_state.get('show_temporal'):
-                if show_dow:
-                    st.markdown("#### Delay by Day of Week")
+                        if show_dep_time:
+                            st.markdown("#### Delay vs Trip Departure Hour")
+                            st.caption(
+                                "Each point represents one trip. The x-axis shows the approximate "
+                                "hour at which the trip departed its origin stop. The dotted trend "
+                                "line indicates the overall directional relationship."
+                            )
+                            fig = build_departure_scatter(trip_stats)
+                            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_dep")
+                            announce_sr("Departure-time scatter chart rendered.")
+                            
+                            with st.expander("📋 View data as accessible table", expanded=False):
+                                st.caption("Accessible data table for Delay vs Trip Departure Hour")
+                                data = []
+                                for h, d, dt in zip(trip_stats['per_trip_hour'], trip_stats['per_trip_mean_delay'], trip_stats['per_trip_date']):
+                                    if h is not None and not np.isnan(d):
+                                        data.append({"Departure Hour": round(h, 1), "Date": dt, "Mean Delay (min)": d/60})
+                                if data:
+                                    df_dep = pd.DataFrame(data).sort_values("Departure Hour")
+                                    st.dataframe(df_dep, hide_index=True)
+                        else:
+                            st.info(
+                                "**Departure-time scatter unavailable.** This chart requires at "
+                                "least 30 minutes of variation in trip departure times across the "
+                                "analyzed sample. All trips in this signature depart within a "
+                                "narrower window — consider analyzing a broader time range."
+                            )
+
+            st.markdown("---")
+
+            # ── SECTION 2: SPACE-TIME STRUCTURE ───────────────────────────────────
+            st.markdown("### 🗂️ Space-Time Structure")
+
+            if not has_analysis or is_multi or trip_stats is None:
+                st.info(
+                    "🗂️ **Space-time structure charts are available for single-signature "
+                    "analyses only.** Re-run in single-signature mode to access delay "
+                    "variability and heatmap breakdowns."
+                )
+            else:
+                show_time_hm = trip_stats['hour_range'] >= 0.5 and not is_multi
+                show_dow_hm  = trip_stats['n_unique_dow'] >= 3 and not is_multi
+
+                if 'show_spacetime' not in st.session_state:
+                    st.session_state.show_spacetime = False
+                if st.button("Generate Space-Time Charts", key="btn_spacetime",
+                             help="Computes delay variability and heatmap breakdowns."):
+                    st.session_state.show_spacetime = True
+
+                if st.session_state.get('show_spacetime'):
+
+                    st.markdown("#### Delay Distribution by Stop (Box-and-Whisker)")
                     st.caption(
-                        "Each box shows the distribution of per-trip mean delays for that "
-                        "day. The horizontal dashed line marks the scheduled baseline (zero "
-                        "delay). Outlier points are shown individually."
+                        "Shows the full distribution of arrival delay (relative to schedule) "
+                        "at each stop in route order. Boxes represent the interquartile range; "
+                        "whiskers extend to 1.5× IQR; outlier points are shown individually. "
+                        "The dashed line at zero marks the scheduled arrival time."
                     )
-                    fig = build_dow_chart(trip_stats)
-                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_dow")
-                    announce_sr("Day-of-week delay distribution chart rendered.")
+                    fig = build_delay_variance_chart(trip_stats)
+                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_variance")
+                    announce_sr("Stop delay distribution box plot rendered.")
                     
                     with st.expander("📋 View data as accessible table", expanded=False):
-                        st.caption("Accessible data table for Per-Trip Mean Delay by Day of Week")
+                        st.caption("Accessible data table for Delay Distribution by Stop")
                         data = []
-                        for d in range(7):
-                            delays = [trip_stats['per_trip_mean_delay'][i]/60 for i, dow in enumerate(trip_stats['per_trip_dow']) if dow == d and not np.isnan(trip_stats['per_trip_mean_delay'][i])]
-                            if len(delays) >= 3:
+                        for sid in trip_stats['stop_order']:
+                            if sid in trip_stats['per_stop_delays'] and len(trip_stats['per_stop_delays'][sid]) >= 2:
+                                delays = [d/60 for d in trip_stats['per_stop_delays'][sid]]
                                 data.append({
-                                    "Day": DOW_LABELS[d], "N Trips": len(delays),
+                                    "Stop": trip_stats['stop_names'][sid],
+                                    "N Observations": len(delays),
                                     "Median Delay (min)": np.median(delays),
-                                    "Min (min)": np.min(delays), "Max (min)": np.max(delays)
+                                    "Std Dev (min)": np.std(delays),
+                                    "Min (min)": np.min(delays),
+                                    "Max (min)": np.max(delays)
                                 })
                         st.dataframe(pd.DataFrame(data), hide_index=True)
-                else:
-                    st.info(
-                        "**Day-of-week chart unavailable.** This chart requires data from "
-                        "at least 3 distinct days of the week. Your current analysis "
-                        "covers fewer — expand the day filters in the settings panel."
-                    )
 
-                st.markdown("---")
+                    st.markdown("---")
 
-                if show_date:
-                    st.markdown("#### Daily Mean Delay Over Time")
-                    st.caption(
-                        "Each point represents the mean per-trip delay across all trips "
-                        "on that operating date. The dotted blue line shows a 7-day rolling "
-                        "average when sufficient dates are available."
-                    )
-                    fig = build_date_trend_chart(trip_stats)
-                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_date")
-                    announce_sr("Date trend chart rendered.")
-                    
-                    with st.expander("📋 View data as accessible table", expanded=False):
-                        st.caption("Accessible data table for Daily Mean Delay Over Time")
-                        date_dict = {}
-                        for d, delay in zip(trip_stats['per_trip_date'], trip_stats['per_trip_mean_delay']):
-                            if d and not np.isnan(delay):
-                                date_dict.setdefault(d, []).append(delay/60)
-                        data = [{"Date": d, "N Trips": len(date_dict[d]), "Mean Delay (min)": np.mean(date_dict[d])} for d in sorted(date_dict.keys())]
-                        st.dataframe(pd.DataFrame(data), hide_index=True)
-                else:
-                    st.info(
-                        "**Date trend chart unavailable.** This chart requires at least "
-                        "7 different operating dates. Your current analysis spans fewer. "
-                        "Broaden the date range of your underlying dataset to enable this."
-                    )
+                    if show_time_hm:
+                        st.markdown("#### Mean Delay — Stop × Time of Day")
+                        st.caption(
+                            "Each cell shows the mean arrival delay (minutes) at that stop "
+                            "during that time period. Red indicates late arrivals; blue indicates "
+                            "early arrivals; white indicates on-time performance. Grey cells have "
+                            "fewer than 2 observations and are shown as not-a-number."
+                        )
+                        fig = build_stop_time_heatmap(trip_stats)
+                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_time_hm")
+                        announce_sr("Stop by time-of-day delay heatmap rendered.")
+                        
+                        with st.expander("📋 View data as accessible table", expanded=False):
+                            st.caption("Accessible data table for Mean Delay by Stop and Time of Day")
+                            buckets = {b[0]: [] for b in TIME_BUCKETS}
+                            for line in trip_stats['mode_b_lines']:
+                                anc = line.get('anchor_sec')
+                                if anc is None: continue
+                                hour = (float(anc) % 86400.0) / 3600.0
+                                for name, s, e in TIME_BUCKETS:
+                                    if s <= hour < e:
+                                        buckets[name].append(line)
+                                        break
+                            used_buckets = [name for name, _, _ in TIME_BUCKETS if len(buckets[name]) >= 3]
+                            df_data = {}
+                            for b_name in used_buckets:
+                                row_data = {}
+                                for sid in trip_stats['stop_order']:
+                                    stop_name = trip_stats['stop_names'][sid]
+                                    delays = []
+                                    for line in buckets[b_name]:
+                                        sd = line.get('stop_delays', {})
+                                        if sid in sd and sid in trip_stats['rel_sec_map']:
+                                            delays.append((sd[sid] - trip_stats['rel_sec_map'][sid])/60)
+                                    row_data[clean_stop_name(stop_name)] = round(np.mean(delays), 1) if len(delays) >= 2 else np.nan
+                                df_data[b_name] = row_data
+                            df_table = pd.DataFrame.from_dict(df_data, orient='index')
+                            st.dataframe(df_table)
+                    else:
+                        st.info(
+                            "**Stop × time-of-day heatmap unavailable.** This chart requires "
+                            "at least 30 minutes of variation in trip departure times across the "
+                            "analyzed sample. The current analysis window is too narrow to reveal "
+                            "meaningful time-of-day patterns. Broaden the time filter to enable."
+                        )
 
-                st.markdown("---")
+                    st.markdown("---")
 
-                if show_dep_time:
-                    st.markdown("#### Delay vs Trip Departure Hour")
-                    st.caption(
-                        "Each point represents one trip. The x-axis shows the approximate "
-                        "hour at which the trip departed its origin stop. The dotted trend "
-                        "line indicates the overall directional relationship."
-                    )
-                    fig = build_departure_scatter(trip_stats)
-                    st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_dep")
-                    announce_sr("Departure-time scatter chart rendered.")
-                    
-                    with st.expander("📋 View data as accessible table", expanded=False):
-                        st.caption("Accessible data table for Delay vs Trip Departure Hour")
-                        data = []
-                        for h, d, dt in zip(trip_stats['per_trip_hour'], trip_stats['per_trip_mean_delay'], trip_stats['per_trip_date']):
-                            if h is not None and not np.isnan(d):
-                                data.append({"Departure Hour": round(h, 1), "Date": dt, "Mean Delay (min)": d/60})
-                        if data:
-                            df_dep = pd.DataFrame(data).sort_values("Departure Hour")
-                            st.dataframe(df_dep, hide_index=True)
-                else:
-                    st.info(
-                        "**Departure-time scatter unavailable.** This chart requires at "
-                        "least 30 minutes of variation in trip departure times across the "
-                        "analyzed sample. All trips in this signature depart within a "
-                        "narrower window — consider analyzing a broader time range."
-                    )
-
-    st.markdown("---")
-
-    # ── SECTION 2: SPACE-TIME STRUCTURE ───────────────────────────────────
-    st.markdown("### 🗂️ Space-Time Structure")
-
-    if not has_analysis or is_multi or trip_stats is None:
-        st.info(
-            "🗂️ **Space-time structure charts are available for single-signature "
-            "analyses only.** Re-run in single-signature mode to access delay "
-            "variability and heatmap breakdowns."
-        )
-    else:
-        show_time_hm = trip_stats['hour_range'] >= 0.5 and not is_multi
-        show_dow_hm  = trip_stats['n_unique_dow'] >= 3 and not is_multi
-
-        if 'show_spacetime' not in st.session_state:
-            st.session_state.show_spacetime = False
-        if st.button("Generate Space-Time Charts", key="btn_spacetime",
-                     help="Computes delay variability and heatmap breakdowns."):
-            st.session_state.show_spacetime = True
-
-        if st.session_state.get('show_spacetime'):
-
-            st.markdown("#### Delay Distribution by Stop (Box-and-Whisker)")
-            st.caption(
-                "Shows the full distribution of arrival delay (relative to schedule) "
-                "at each stop in route order. Boxes represent the interquartile range; "
-                "whiskers extend to 1.5× IQR; outlier points are shown individually. "
-                "The dashed line at zero marks the scheduled arrival time."
-            )
-            fig = build_delay_variance_chart(trip_stats)
-            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_variance")
-            announce_sr("Stop delay distribution box plot rendered.")
-            
-            with st.expander("📋 View data as accessible table", expanded=False):
-                st.caption("Accessible data table for Delay Distribution by Stop")
-                data = []
-                for sid in trip_stats['stop_order']:
-                    if sid in trip_stats['per_stop_delays'] and len(trip_stats['per_stop_delays'][sid]) >= 2:
-                        delays = [d/60 for d in trip_stats['per_stop_delays'][sid]]
-                        data.append({
-                            "Stop": trip_stats['stop_names'][sid],
-                            "N Observations": len(delays),
-                            "Median Delay (min)": np.median(delays),
-                            "Std Dev (min)": np.std(delays),
-                            "Min (min)": np.min(delays),
-                            "Max (min)": np.max(delays)
-                        })
-                st.dataframe(pd.DataFrame(data), hide_index=True)
+                    if show_dow_hm:
+                        st.markdown("#### Mean Delay — Stop × Day of Week")
+                        st.caption(
+                            "Each cell shows the mean arrival delay at that stop on that day "
+                            "of the week. Same colour encoding as the time-of-day heatmap above."
+                        )
+                        fig = build_stop_dow_heatmap(trip_stats)
+                        st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_dow_hm")
+                        announce_sr("Stop by day-of-week delay heatmap rendered.")
+                        
+                        with st.expander("📋 View data as accessible table", expanded=False):
+                            st.caption("Accessible data table for Mean Delay by Stop and Day of Week")
+                            dow_dict = {d: [] for d in range(7)}
+                            for i, d in enumerate(trip_stats['per_trip_dow']):
+                                if d is not None:
+                                    dow_dict[d].append(trip_stats['mode_b_lines'][i])
+                            used_dows = [d for d in range(7) if len(dow_dict[d]) >= 3]
+                            df_data = {}
+                            for d in used_dows:
+                                row_data = {}
+                                for sid in trip_stats['stop_order']:
+                                    stop_name = trip_stats['stop_names'][sid]
+                                    delays = []
+                                    for line in dow_dict[d]:
+                                        sd = line.get('stop_delays', {})
+                                        if sid in sd and sid in trip_stats['rel_sec_map']:
+                                            delays.append((sd[sid] - trip_stats['rel_sec_map'][sid])/60)
+                                    row_data[clean_stop_name(stop_name)] = round(np.mean(delays), 1) if len(delays) >= 2 else np.nan
+                                df_data[DOW_LABELS[d]] = row_data
+                            df_table = pd.DataFrame.from_dict(df_data, orient='index')
+                            st.dataframe(df_table)
+                    else:
+                        st.info(
+                            "**Stop × day-of-week heatmap unavailable.** This chart requires "
+                            "data from at least 3 distinct days of the week. Expand the day "
+                            "filters in the settings panel and re-run to enable."
+                        )
 
             st.markdown("---")
 
-            if show_time_hm:
-                st.markdown("#### Mean Delay — Stop × Time of Day")
-                st.caption(
-                    "Each cell shows the mean arrival delay (minutes) at that stop "
-                    "during that time period. Red indicates late arrivals; blue indicates "
-                    "early arrivals; white indicates on-time performance. Grey cells have "
-                    "fewer than 2 observations and are shown as not-a-number."
+            # ── SECTION 3: EQUITY ─────────────────────────────────────────────────
+            st.markdown("### 🏘️ Equity Analysis")
+
+            try:
+                equity_gdf     = load_equity_data()
+                equity_available = (equity_gdf is not None and not equity_gdf.empty)
+            except Exception:
+                equity_available = False
+
+            if not equity_available:
+                st.info(
+                    "🏘️ **Equity data is not available.** Upload "
+                    "`equity_neighbourhoods.geojson` to the HuggingFace repository "
+                    "to enable this section. See the Route Reliability Map tab for "
+                    "upload instructions."
                 )
-                fig = build_stop_time_heatmap(trip_stats)
-                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_time_hm")
-                announce_sr("Stop by time-of-day delay heatmap rendered.")
+            elif active_equity_stops is None:
+                st.info(
+                    "🏘️ **No reliability data available.** Run an analysis or allow the default network to load to enable the equity scatter chart."
+                )
+            else:
+                if not has_analysis:
+                    st.info("📈 **Showing Network-Wide Equity Analysis.** This view uses precomputed reliability data for the entire streetcar network. For detailed Temporal and Space-Time charts, please run a custom analysis for a specific route.")
+                
+                EQUITY_METRIC_OPTIONS = {
+                    "Median Household Income ($)":          "median_income",
+                    "Low-Income Households (%)":            "low_income_pct",
+                    "Transit Commuters (%)":                "transit_commute_pct",
+                    "Visible Minority Population (%)":      "visible_minority_pct",
+                    "Recent Immigrants — Last 5 Yrs (%)":   "recent_immigrant_pct",
+                    "Seniors 65+ (%)":                      "senior_pct",
+                }
+
+                st.caption(
+                    "Each dot represents one stop, plotted against the equity indicator "
+                    "for the neighbourhood it falls within. Dots are colour-coded and "
+                    "shape-coded by route — both visual channels are used so the chart "
+                    "remains readable for users with colour vision differences."
+                )
+
+                selected_label = st.selectbox(
+                    "Equity metric to compare against stop reliability:",
+                    options = list(EQUITY_METRIC_OPTIONS.keys()),
+                    key     = "equity_metric_select"
+                )
+                selected_field = EQUITY_METRIC_OPTIONS[selected_label]
+
+                stops_clean = active_equity_stops[active_equity_stops['stop_lat'].notna()].copy()
+
+                fig_eq = build_equity_scatter(
+                    stops_clean, equity_gdf, selected_field, selected_label
+                )
+                st.plotly_chart(fig_eq, use_container_width=True, config=PLOTLY_CONFIG, key="chart_equity")
+                announce_sr(
+                    f"Equity scatter chart rendered: stop reliability versus "
+                    f"{selected_label}."
+                )
                 
                 with st.expander("📋 View data as accessible table", expanded=False):
-                    st.caption("Accessible data table for Mean Delay by Stop and Time of Day")
-                    buckets = {b[0]: [] for b in TIME_BUCKETS}
-                    for line in trip_stats['mode_b_lines']:
-                        anc = line.get('anchor_sec')
-                        if anc is None: continue
-                        hour = (float(anc) % 86400.0) / 3600.0
-                        for name, s, e in TIME_BUCKETS:
-                            if s <= hour < e:
-                                buckets[name].append(line)
-                                break
-                    used_buckets = [name for name, _, _ in TIME_BUCKETS if len(buckets[name]) >= 3]
-                    df_data = {}
-                    for b_name in used_buckets:
-                        row_data = {}
-                        for sid in trip_stats['stop_order']:
-                            stop_name = trip_stats['stop_names'][sid]
-                            delays = []
-                            for line in buckets[b_name]:
-                                sd = line.get('stop_delays', {})
-                                if sid in sd and sid in trip_stats['rel_sec_map']:
-                                    delays.append((sd[sid] - trip_stats['rel_sec_map'][sid])/60)
-                            row_data[clean_stop_name(stop_name)] = round(np.mean(delays), 1) if len(delays) >= 2 else np.nan
-                        df_data[b_name] = row_data
-                    df_table = pd.DataFrame.from_dict(df_data, orient='index')
-                    st.dataframe(df_table)
-            else:
-                st.info(
-                    "**Stop × time-of-day heatmap unavailable.** This chart requires "
-                    "at least 30 minutes of variation in trip departure times across the "
-                    "analyzed sample. The current analysis window is too narrow to reveal "
-                    "meaningful time-of-day patterns. Broaden the time filter to enable."
-                )
-
-            st.markdown("---")
-
-            if show_dow_hm:
-                st.markdown("#### Mean Delay — Stop × Day of Week")
-                st.caption(
-                    "Each cell shows the mean arrival delay at that stop on that day "
-                    "of the week. Same colour encoding as the time-of-day heatmap above."
-                )
-                fig = build_stop_dow_heatmap(trip_stats)
-                st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_dow_hm")
-                announce_sr("Stop by day-of-week delay heatmap rendered.")
-                
-                with st.expander("📋 View data as accessible table", expanded=False):
-                    st.caption("Accessible data table for Mean Delay by Stop and Day of Week")
-                    dow_dict = {d: [] for d in range(7)}
-                    for i, d in enumerate(trip_stats['per_trip_dow']):
-                        if d is not None:
-                            dow_dict[d].append(trip_stats['mode_b_lines'][i])
-                    used_dows = [d for d in range(7) if len(dow_dict[d]) >= 3]
-                    df_data = {}
-                    for d in used_dows:
-                        row_data = {}
-                        for sid in trip_stats['stop_order']:
-                            stop_name = trip_stats['stop_names'][sid]
-                            delays = []
-                            for line in dow_dict[d]:
-                                sd = line.get('stop_delays', {})
-                                if sid in sd and sid in trip_stats['rel_sec_map']:
-                                    delays.append((sd[sid] - trip_stats['rel_sec_map'][sid])/60)
-                            row_data[clean_stop_name(stop_name)] = round(np.mean(delays), 1) if len(delays) >= 2 else np.nan
-                        df_data[DOW_LABELS[d]] = row_data
-                    df_table = pd.DataFrame.from_dict(df_data, orient='index')
-                    st.dataframe(df_table)
-            else:
-                st.info(
-                    "**Stop × day-of-week heatmap unavailable.** This chart requires "
-                    "data from at least 3 distinct days of the week. Expand the day "
-                    "filters in the settings panel and re-run to enable."
-                )
-
-    st.markdown("---")
-
-    # ── SECTION 3: EQUITY ─────────────────────────────────────────────────
-    st.markdown("### 🏘️ Equity Analysis")
-
-    try:
-        equity_gdf     = load_equity_data()
-        equity_available = (equity_gdf is not None and not equity_gdf.empty)
-    except Exception:
-        equity_available = False
-
-    if not equity_available:
-        st.info(
-            "🏘️ **Equity data is not available.** Upload "
-            "`equity_neighbourhoods.geojson` to the HuggingFace repository "
-            "to enable this section. See the Route Reliability Map tab for "
-            "upload instructions."
-        )
-    elif active_equity_stops is None:
-        st.info(
-            "🏘️ **No reliability data available.** Run an analysis or allow the default network to load to enable the equity scatter chart."
-        )
-    else:
-        if not has_analysis:
-            st.info("📈 **Showing Network-Wide Equity Analysis.** This view uses precomputed reliability data for the entire streetcar network. For detailed Temporal and Space-Time charts, please run a custom analysis for a specific route.")
-        
-        EQUITY_METRIC_OPTIONS = {
-            "Median Household Income ($)":          "median_income",
-            "Low-Income Households (%)":            "low_income_pct",
-            "Transit Commuters (%)":                "transit_commute_pct",
-            "Visible Minority Population (%)":      "visible_minority_pct",
-            "Recent Immigrants — Last 5 Yrs (%)":   "recent_immigrant_pct",
-            "Seniors 65+ (%)":                      "senior_pct",
-        }
-
-        st.caption(
-            "Each dot represents one stop, plotted against the equity indicator "
-            "for the neighbourhood it falls within. Dots are colour-coded and "
-            "shape-coded by route — both visual channels are used so the chart "
-            "remains readable for users with colour vision differences."
-        )
-
-        selected_label = st.selectbox(
-            "Equity metric to compare against stop reliability:",
-            options = list(EQUITY_METRIC_OPTIONS.keys()),
-            key     = "equity_metric_select"
-        )
-        selected_field = EQUITY_METRIC_OPTIONS[selected_label]
-
-        stops_clean = active_equity_stops[active_equity_stops['stop_lat'].notna()].copy()
-
-        fig_eq = build_equity_scatter(
-            stops_clean, equity_gdf, selected_field, selected_label
-        )
-        st.plotly_chart(fig_eq, use_container_width=True, config=PLOTLY_CONFIG, key="chart_equity")
-        announce_sr(
-            f"Equity scatter chart rendered: stop reliability versus "
-            f"{selected_label}."
-        )
-        
-        with st.expander("📋 View data as accessible table", expanded=False):
-            st.caption(f"Accessible data table for Equity Scatter ({selected_label})")
-            stops_gdf = gpd.GeoDataFrame(
-                stops_clean.copy(),
-                geometry=gpd.points_from_xy(stops_clean['stop_lon'], stops_clean['stop_lat']),
-                crs=LATLON_PROJ
-            )
-            joined = gpd.sjoin(
-                stops_gdf[['stop_name','route_id','reliability','geometry']],
-                equity_gdf[['area_name', selected_field, 'geometry']],
-                how='left', predicate='within'
-            )
-            joined = joined.dropna(subset=[selected_field, 'reliability']).sort_values('reliability')
-            joined = joined.rename(columns={
-                'stop_name': 'Stop Name', 'route_id': 'Route',
-                'area_name': 'Neighbourhood', selected_field: selected_label,
-                'reliability': 'Reliability (%)'
-            })
-            st.write(f"Showing {len(joined)} joined stops.")
-            st.dataframe(joined[['Stop Name', 'Route', 'Neighbourhood', selected_label, 'Reliability (%)']], hide_index=True)
+                    st.caption(f"Accessible data table for Equity Scatter ({selected_label})")
+                    stops_gdf = gpd.GeoDataFrame(
+                        stops_clean.copy(),
+                        geometry=gpd.points_from_xy(stops_clean['stop_lon'], stops_clean['stop_lat']),
+                        crs=LATLON_PROJ
+                    )
+                    joined = gpd.sjoin(
+                        stops_gdf[['stop_name','route_id','reliability','geometry']],
+                        equity_gdf[['area_name', selected_field, 'geometry']],
+                        how='left', predicate='within'
+                    )
+                    joined = joined.dropna(subset=[selected_field, 'reliability']).sort_values('reliability')
+                    joined = joined.rename(columns={
+                        'stop_name': 'Stop Name', 'route_id': 'Route',
+                        'area_name': 'Neighbourhood', selected_field: selected_label,
+                        'reliability': 'Reliability (%)'
+                    })
+                    st.write(f"Showing {len(joined)} joined stops.")
+                    st.dataframe(joined[['Stop Name', 'Route', 'Neighbourhood', selected_label, 'Reliability (%)']], hide_index=True)
+                    
+    render_charts_tab()
 
 with tab_recal:
-    has_analysis = st.session_state.analysis_results is not None
-    is_multi     = st.session_state.analysis_results.get('is_multi', False) if has_analysis else False
+    @st.fragment
+    def render_recal_tab():
+        has_analysis = st.session_state.analysis_results is not None
+        is_multi     = st.session_state.analysis_results.get('is_multi', False) if has_analysis else False
 
-    if not has_analysis:
-        st.info(
-            "📅 **No analysis loaded.** Use the **⚙️ Open Filter & Analysis "
-            "Settings** button above to run an analysis. Schedule recalibration "
-            "will become available once a single-signature analysis is complete."
-        )
-    elif is_multi:
-        st.warning(
-            "⚠️ **Schedule recalibration is only available for single-signature "
-            "analyses.** The current result is a multi-route network analysis. "
-            "Switch to single-signature mode and re-run to access recalibration."
-        )
-    else:
-        st.markdown("#### 📅 Schedule Recalibration")
-        st.caption(f"Analysis: {st.session_state.raw_pipeline_data['title_info']}")
-
-        st.warning(
-            "⚠️ **Schedule recalibration produces the most meaningful results "
-            "when applied to a homogeneous group of trips** — ideally a single "
-            "headsign operating within a consistent, narrow time window (e.g., "
-            "AM peak only). Applying recalibration to a broad multi-hour dataset "
-            "will produce adjustments that average across very different operating "
-            "conditions and may be suboptimal for any specific time period. Use "
-            "the time and day filters to narrow your analysis before downloading."
-        )
-
-        st.markdown("""
-    The **target percentile** controls how conservative the adjusted schedule is:
-    - **50th (median):** Minimises added journey time. Half of trips will still appear late relative to the new schedule.
-    - **75th:** Approximately 75% of trips appear on-time or early. Moderate buffer.
-    - **85th:** Industry-standard target. Approximately 85% of trips appear on-time or early.
-    - **95th:** Highly conservative. Near-universal on-time performance at the cost of significantly longer scheduled journey times.
-    """)
-
-        target_pct = st.slider(
-            "Target Percentile",
-            min_value=50, max_value=95, value=85, step=5,
-            key="recal_percentile_slider_tab",
-            help="Higher = more trips appear on-time, but official journey times increase."
-        )
-
-        recal_df = compute_recalibration(
-            st.session_state.raw_pipeline_data['st_filtered'],
-            st.session_state.raw_pipeline_data['actual_relative_times'],
-            target_pct
-        )
-
-        if recal_df is None:
+        if not has_analysis:
+            st.info(
+                "📅 **No analysis loaded.** Use the **⚙️ Open Filter & Analysis "
+                "Settings** button above to run an analysis. Schedule recalibration "
+                "will become available once a single-signature analysis is complete."
+            )
+        elif is_multi:
             st.warning(
-                "Insufficient data to compute recalibration. Each stop requires at "
-                "least 3 observed arrivals. Try broadening your date range or day "
-                "filters to capture more historical runs."
+                "⚠️ **Schedule recalibration is only available for single-signature "
+                "analyses.** The current result is a multi-route network analysis. "
+                "Switch to single-signature mode and re-run to access recalibration."
             )
         else:
-            st.markdown(
-                f"**{len(recal_df)} stops with sufficient data** — "
-                f"{target_pct}th percentile target applied."
+            st.markdown("#### 📅 Schedule Recalibration")
+            st.caption(f"Analysis: {st.session_state.raw_pipeline_data['title_info']}")
+
+            st.warning(
+                "⚠️ **Schedule recalibration produces the most meaningful results "
+                "when applied to a homogeneous group of trips**. This is ideally a single "
+                "headsign operating within a consistent, narrow time window (e.g., "
+                "AM peak only). Applying recalibration to a broad multi-hour dataset "
+                "will produce adjustments that average across very different operating "
+                "conditions and may be suboptimal for any specific time period. Use "
+                "the time and day filters to narrow your analysis before downloading."
             )
 
-            st.dataframe(
-                recal_df[['stop_name','current_schedule','suggested_schedule',
-                          'adjustment_min','sample_size']],
-                column_config={
-                    'stop_name':          st.column_config.TextColumn("Stop"),
-                    'current_schedule':   st.column_config.TextColumn("Current GTFS Time"),
-                    'suggested_schedule': st.column_config.TextColumn("Suggested Time"),
-                    'adjustment_min':     st.column_config.NumberColumn(
-                                              "Adjustment (min)", format="%.1f"),
-                    'sample_size':        st.column_config.NumberColumn(
-                                              "Observations", format="%d"),
-                },
-                use_container_width=True,
-                hide_index=True
+            st.markdown("""
+        The **target percentile** controls how conservative the adjusted schedule is:
+        - **50th (median):** Minimises added journey time. Half of trips will still appear late relative to the new schedule.
+        - **75th:** Approximately 75% of trips appear on-time or early. Moderate buffer.
+        - **85th:** Industry-standard target. Approximately 85% of trips appear on-time or early.
+        - **95th:** Highly conservative. Near-universal on-time performance at the cost of significantly longer scheduled journey times.
+        """)
+
+            target_pct = st.slider(
+                "Target Percentile",
+                min_value=50, max_value=95, value=85, step=5,
+                key="recal_percentile_slider_tab",
+                help="Higher = more trips appear on-time, but official journey times increase."
             )
 
-            gtfs_content = generate_gtfs_stop_times_content(
-                recal_df, st.session_state.raw_pipeline_data
+            recal_df = compute_recalibration(
+                st.session_state.raw_pipeline_data['st_filtered'],
+                st.session_state.raw_pipeline_data['actual_relative_times'],
+                target_pct
             )
-            st.download_button(
-                label="⬇️ Download Adjusted Schedule as GTFS stop_times.txt",
-                data=gtfs_content,
-                file_name="suggested_stop_times.txt",
-                mime="text/plain",
-                key="recal_dl_btn_tab",
-                help=(
-                    "Downloads a GTFS-format stop_times.txt file with the suggested "
-                    "adjusted schedule. This covers one schedule signature only and "
-                    "is not a complete GTFS feed. For reference use only."
+
+            if recal_df is None:
+                st.warning(
+                    "Insufficient data to compute recalibration. Each stop requires at "
+                    "least 3 observed arrivals. Try broadening your date range or day "
+                    "filters to capture more historical runs."
                 )
-            )
+            else:
+                st.markdown(
+                    f"**{len(recal_df)} stops with sufficient data** — "
+                    f"{target_pct}th percentile target applied."
+                )
 
-            st.caption(
-                "⚠️ Verify adjustments against additional date ranges before "
-                "operational use. When 'Align to First Observed Stop' mode was "
-                "active, adjustments incorporate actual GPS-observed departure "
-                "timing rather than the GTFS-scheduled departure time."
-            )
+                st.dataframe(
+                    recal_df[['stop_name','current_schedule','suggested_schedule',
+                              'adjustment_min','sample_size']],
+                    column_config={
+                        'stop_name':          st.column_config.TextColumn("Stop"),
+                        'current_schedule':   st.column_config.TextColumn("Current GTFS Time"),
+                        'suggested_schedule': st.column_config.TextColumn("Suggested Time"),
+                        'adjustment_min':     st.column_config.NumberColumn(
+                                                  "Adjustment (min)", format="%.1f"),
+                        'sample_size':        st.column_config.NumberColumn(
+                                                  "Observations", format="%d"),
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                gtfs_content = generate_gtfs_stop_times_content(
+                    recal_df, st.session_state.raw_pipeline_data
+                )
+                st.download_button(
+                    label="⬇️ Download Adjusted Schedule as GTFS stop_times.txt",
+                    data=gtfs_content,
+                    file_name="suggested_stop_times.txt",
+                    mime="text/plain",
+                    key="recal_dl_btn_tab",
+                    help=(
+                        "Downloads a GTFS-format stop_times.txt file with the suggested "
+                        "adjusted schedule. This covers one schedule signature only and "
+                        "is not a complete GTFS feed. For reference use only."
+                    )
+                )
+
+                st.caption(
+                    "When 'Align to First Observed Stop' mode was "
+                    "active, adjustments incorporate actual GPS-observed departure "
+                    "timing rather than the GTFS-scheduled departure time."
+                )
+    render_recal_tab()
 
 st.markdown("---")
 st.caption("**Data Privacy Statement:** All data is open public data sourced from the City of Toronto Open Data Portal. © 2026 Neil Simmons. All rights reserved.")
