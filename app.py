@@ -782,7 +782,7 @@ def compute_trip_stats(raw_pipeline_data):
     """
     Derives per-trip and per-stop aggregated statistics from the enriched
     mode_b_lines produced by run_tracking(). Returns a dict stored under
-    raw_pipeline_data['trip_stats']. Only valid for single-route analyses.
+    raw_pipeline_data['trip_stats']. Only valid for single-signature analyses.
     """
     mode_b = raw_pipeline_data['mode_b_lines']
     art    = raw_pipeline_data['actual_relative_times']
@@ -2226,8 +2226,8 @@ with tab_analytics:
     
     if not has_analysis or is_multi or trip_stats is None:
         st.info(
-            "⏱️ **Temporal pattern charts are available for single-route analyses "
-            "only.** Switch to single-route mode in the settings panel above and "
+            "⏱️ **Temporal pattern charts are available for single-signature analyses "
+            "only.** Switch to single-signature mode in the settings panel above and "
             "re-run the analysis to access day-of-week, date trend, and departure-"
             "time breakdowns."
         )
@@ -2350,8 +2350,8 @@ with tab_analytics:
 
     if not has_analysis or is_multi or trip_stats is None:
         st.info(
-            "🗂️ **Space-time structure charts are available for single-route "
-            "analyses only.** Re-run in single-route mode to access delay "
+            "🗂️ **Space-time structure charts are available for single-signature "
+            "analyses only.** Re-run in single-signature mode to access delay "
             "variability and heatmap breakdowns."
         )
     else:
@@ -2570,13 +2570,13 @@ with tab_recal:
         st.info(
             "📅 **No analysis loaded.** Use the **⚙️ Open Filter & Analysis "
             "Settings** button above to run an analysis. Schedule recalibration "
-            "will become available once a single-route analysis is complete."
+            "will become available once a single-signature analysis is complete."
         )
     elif is_multi:
         st.warning(
-            "⚠️ **Schedule recalibration is only available for single-route "
+            "⚠️ **Schedule recalibration is only available for single-signature "
             "analyses.** The current result is a multi-route network analysis. "
-            "Switch to single-route mode and re-run to access recalibration."
+            "Switch to single-signature mode and re-run to access recalibration."
         )
     else:
         st.markdown("#### 📅 Schedule Recalibration")
