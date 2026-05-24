@@ -59,7 +59,11 @@ cd TTC-ScheduleWatch
 **3. Create a virtual environment using Python 3.11 explicitly**
 
 ```bash
+# macOS / Linux
 python3.11 -m venv venv
+
+#Windows
+py -3.11 -m venv venv
 ```
 
 > On Windows, use `py -3.11 -m venv venv` instead.
