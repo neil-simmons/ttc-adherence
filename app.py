@@ -1010,9 +1010,9 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
             hovertemplate=density_hover_template
         ))
 
-    # -------------------------------------------------------------
-    # BUILD FIG B (TIME-DISTANCE) WITH EXPLICIT HOVER TEMPLATES
-    # -------------------------------------------------------------
+    # -----------------------------------------------------------------
+    # BUILD FIG B (TIME-DISTANCE) WITH EXPLICIT HOVER TEMPLATES & SPEED
+    # -----------------------------------------------------------------
     fig_B = go.Figure()
     
     hover_tmpl = (
@@ -1021,13 +1021,22 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         "<b>Abs Time:</b> %{customdata[3]}<br>"
         "<b>Distance:</b> %{y:.2f} km<br>"
         "<b>Rel Time:</b> %{x:.1f} mins<br>"
+        "<b>Avg Speed (Last Segment):</b> %{customdata[6]:.1f} km/h<br>"  # Added speed to hover
         "<i>(Click point to get Google Maps link)</i>"
         "<extra></extra>" 
     )
 
     for line_data in raw_data['mode_b_lines']:
-        cd = np.empty((len(line_data['x']), 6), dtype=object)
-        cd[:, 0], cd[:, 1], cd[:, 2], cd[:, 3], cd[:, 4], cd[:, 5] = line_data['op_date'], line_data['start_time'], line_data['t_id'], line_data['abs_time'], line_data['lat'], line_data['lon']
+        # Expanded customdata from 6 dimensions to 7 to house segment speed
+        cd = np.empty((len(line_data['x']), 7), dtype=object)
+        cd[:, 0] = line_data['op_date']
+        cd[:, 1] = line_data['start_time']
+        cd[:, 2] = line_data['t_id']
+        cd[:, 3] = line_data['abs_time']
+        cd[:, 4] = line_data['lat']
+        cd[:, 5] = line_data['lon']
+        cd[:, 6] = line_data['speed']  # Passed calculated segment speed array to index 6
+        
         fig_B.add_trace(go.Scattergl(
             x=line_data['x'], 
             y=line_data['y'], 
