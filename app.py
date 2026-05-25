@@ -594,34 +594,81 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
         gtfs_start_sec = s2_vars['trip_start_dict'].get(t_id)
         if gtfs_start_sec is None or group['official_dist_km'].isna().all(): continue
 
-        max_dist_idx = group['official_dist_km'].idxmax()
-        group = group.loc[:max_dist_idx].copy()
-        group['official_dist_km'] = group['official_dist_km'].cummax()
-        group = group.drop_duplicates(subset=['official_dist_km'], keep='first')
-
-        # Interpolate BEFORE filtering to the corridor range! 
-        # This prevents the boundary stops from returning NaN when the closest exterior ping is trimmed off.
+        # =====================================================================
+        # 1. ACCURATE TERMINAL LAYOVER TRIMMING (BY INDEX SLICING)
+        # =====================================================================
+        # Identify the extreme physical start and end coordinates of this run
+        min_dist_val = group['official_dist_km'].min()
+        max_dist_val = group['official_dist_km'].max()
         
-        # --- NEW VECTORIZED GAP FILTERING ---
+        # Last ping at the origin terminal (the exact departure moment)
+        start_idx = group[group['official_dist_km'] == min_dist_val].index[-1]
+        # First ping at the destination terminal (the exact arrival moment)
+        end_idx = group[group['official_dist_km'] == max_dist_val].index[0]
+        
+        # Slice to preserve all intermediate pings, but drop dead-time at terminals
+        group = group.loc[start_idx:end_idx].copy()
+        
+        if len(group) < 2: continue
+
+        # =====================================================================
+        # 2. GPS COORDINATE SMOOTHING & RATCHET (WOBBLE FILTER)
+        # =====================================================================
+        # To eliminate GPS coordinates jitter/creep without dropping timestamps, 
+        # we apply a rolling median filter (window of 3) to smooth the distances,
+        # followed by cummax() to prevent backward GPS drift.
+        # This preserves 100% of the dwell-time timestamps and keeps the math & visuals coupled.
+        group['official_dist_km'] = (
+            group['official_dist_km']
+            .rolling(window=3, min_periods=1, center=True)
+            .median()
+        )
+        group['official_dist_km'] = group['official_dist_km'].cummax()
+
+        if group['official_dist_km'].isna().all(): continue
+
+        # =====================================================================
+        # 3. VECTORIZED DETERMINISTIC INTERPOLATION (TRUE ARRIVALS)
+        # =====================================================================
         stop_dists = st_filtered['shape_dist_traveled'].values
         ping_dists = group['official_dist_km'].values
         ping_times = group['op_seconds'].values
         
-        # 1. Base mathematical interpolation
-        interpolated_times = np.interp(stop_dists, ping_dists, ping_times, left=np.nan, right=np.nan)
+        # Search with side='left' to target the exact Arrival Edge of stops
+        idxs = np.searchsorted(ping_dists, stop_dists, side='left')
+        idxs = np.clip(idxs, 1, len(ping_dists) - 1)
         
-        # 2. Find indices of raw pings immediately surrounding each stop
-        idx_after = np.searchsorted(ping_dists, stop_dists)
-        idx_after = np.clip(idx_after, 1, len(ping_dists) - 1) # Prevent index out of bounds
+        # Extract the bounding coordinates and timestamps
+        d1 = ping_dists[idxs - 1]
+        d2 = ping_dists[idxs]
+        t1 = ping_times[idxs - 1]
+        t2 = ping_times[idxs]
         
-        # 3. Calculate the actual time gap (in seconds) between the two bounding pings
-        gaps = ping_times[idx_after] - ping_times[idx_after - 1]
+        # Perform single-step linear interpolation (avoiding division-by-zero)
+        denom = d2 - d1
+        denom_safe = np.where(denom == 0, 1.0, denom)
         
-        # 4. Nullify the interpolation if the gap exceeds the 60-second threshold
-        interpolated_times = np.where(gaps > MAX_ALLOWED_PING_GAP_SEC, np.nan, interpolated_times)
-        # ------------------------------------
+        interpolated_times = t1 + (stop_dists - d1) * (t2 - t1) / denom_safe
+        
+        # Nullify if the stop falls outside the actual tracked range of the trip
+        interpolated_times = np.where(
+            (stop_dists < ping_dists[0]) | (stop_dists > ping_dists[-1]), 
+            np.nan, 
+            interpolated_times
+        )
 
-        run_interpolations = {sid: t for sid, t in zip(st_filtered['stop_id'], interpolated_times) if not np.isnan(t)}
+        # =====================================================================
+        # 4. GEOFENCED GAP FILTERING (PREVENTS FALSE DWELL TIMEOUTS)
+        # =====================================================================
+        # Check the gap of the segment immediately leading into the arrival.
+        # This prevents long dwell times from triggering the missing-data filter.
+        gaps = t2 - t1
+        interpolated_times = np.where(gaps > MAX_ALLOWED_PING_GAP_SEC, np.nan, interpolated_times)
+        # =====================================================================
+
+        run_interpolations = {
+            sid: t for sid, t in zip(st_filtered['stop_id'], interpolated_times) if not np.isnan(t)
+        }
         if not run_interpolations: continue
 
         anchor_stop = st_filtered.iloc[1] if len(st_filtered) > 1 else st_filtered.iloc[0]
@@ -632,8 +679,11 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
         if s2_vars['force_t0']:
             anchor_stop_id = anchor_stop['stop_id']
             if anchor_stop_id not in run_interpolations: continue
+            
+            # Find the time index of the anchor stop using our smoothed pings
             idx_after = np.searchsorted(group['official_dist_km'].values, anchor_stop_dist)
             if idx_after == 0 or idx_after >= len(group): continue
+            
             time_gap = group['op_seconds'].iloc[idx_after] - group['op_seconds'].iloc[idx_after - 1]
             if time_gap > MAX_ALLOWED_PING_GAP_SEC: continue
             anchor_sec = run_interpolations[anchor_stop_id] - anchor_stop['relative_sec']
@@ -641,15 +691,18 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
             anchor_sec = gtfs_start_sec
 
         f_start, f_end = s2_vars['filter_start_sec'], s2_vars['filter_end_sec']
-        if "Trip Start Mode" in s2_vars['time_mode']: is_valid = f_start <= anchor_sec <= f_end
-        else: is_valid = any(f_start <= t <= f_end for t in run_interpolations.values())
+        if "Trip Start Mode" in s2_vars['time_mode']: 
+            is_valid = f_start <= anchor_sec <= f_end
+        else: 
+            is_valid = any(f_start <= t <= f_end for t in run_interpolations.values())
 
         if is_valid:
             stop_delays_this_trip = {
                 str(s_id): (t - anchor_sec)
                 for s_id, t in run_interpolations.items()
             }
-            for s_id, t in run_interpolations.items(): actual_relative_times[s_id].append(t - anchor_sec)
+            for s_id, t in run_interpolations.items(): 
+                actual_relative_times[s_id].append(t - anchor_sec)
 
             dist_diff = group['official_dist_km'].diff()
             time_diff = group['system_time'].diff()
@@ -657,11 +710,9 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
             group['relative_min'] = (group['op_seconds'] - anchor_sec) / 60.0
 
             # Filter points specifically to the selected corridor range for visual plotting
-            # Add a tiny 0.1km buffer so lines connect smoothly to the first and last stops
             plot_group = group[(group['official_dist_km'] >= min_dist - 0.1) & (group['official_dist_km'] <= max_dist + 0.1)].copy()
             if len(plot_group) < 2: continue
 
-            # Trace sequence and inject None element where sequential pings break tracking bounds
             raw_x = plot_group['relative_min'].tolist()
             raw_y = plot_group['official_dist_km'].tolist()
             raw_lat = plot_group['latitude'].tolist()
@@ -677,7 +728,6 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
 
             for i in range(len(raw_x)):
                 if i > 0 and (raw_systime[i] - raw_systime[i-1]) > MAX_ALLOWED_PING_GAP_SEC:
-                    # Injected None breaks the Plotly line visualization when gaps are too large
                     x_gaps.append(None)
                     y_gaps.append(None)
                     abs_gaps.append(None)
