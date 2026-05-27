@@ -1479,46 +1479,16 @@ def render_insights_panel(raw_pipeline_data, analysis_results):
     else:
         cliff_text = "Not enough data to calculate reliability cliff."
 
-    # Insight 6 - Delay Accumulation
-    positions = np.arange(len(merged))
-    reliabilities = merged['reliability'].values
-    if len(positions) > 1 and np.std(reliabilities) > 0:
-        r = np.corrcoef(positions, reliabilities)[0, 1]
-        if r < -0.30:
-            pattern_text = f"Delays accumulate along the route (r = {r:.2f}) — earlier stops are more reliable than later ones."
-        elif r > 0.30:
-            pattern_text = f"Reliability improves along the route (r = {r:.2f}) — vehicles recover schedule as the trip progresses."
-        else:
-            pattern_text = f"No clear spatial trend in reliability (r = {r:.2f}) — delays are distributed unevenly rather than building progressively."
-    else:
-        pattern_text = "Insufficient variation to determine spatial trends."
-
-    # Insight 7 - Systematic Timing Bias
-    all_offsets = []
-    for sid, times in art_str_keys.items():
-        if sid in rel_sec_map and len(times) > 0:
-            mean_offset = np.mean(times) - rel_sec_map[sid]
-            all_offsets.append(mean_offset)
-            
-    if not all_offsets:
-        bias_text = "Insufficient data to assess timing bias."
-    else:
-        overall_mean = np.mean(all_offsets)
-        if overall_mean > 90:
-            bias_text = f"Service runs systematically late (avg {overall_mean/60:.1f} min behind schedule across all stops)."
-        elif overall_mean < -90:
-            bias_text = f"Service runs systematically early (avg {abs(overall_mean)/60:.1f} min ahead of schedule)."
-        else:
-            bias_text = f"Timing is well-centered around the schedule (avg offset: {overall_mean:+.0f}s)."
-
     # Layout
     with st.expander("📋 Key Findings from This Analysis", expanded=True):
-        col1, col2, col3, col4 = st.columns(4)
+        # Adjusted to 3 columns to perfectly fit the 3 top metrics
+        col1, col2, col3 = st.columns(3)
         col1.metric("Trips Analyzed", trips_analyzed)
         col2.metric("Operating Days", operating_days)
         col3.metric("Network On-Time Rate", f"{weighted_reliability:.1f}%")
         
-        c2_1, c2_2, c2_3, c2_4 = st.columns(4)
+        # Adjusted to 2 columns to perfectly fit the Best/Worst metrics
+        c2_1, c2_2 = st.columns(2)
         c2_1.metric(
             label=f"Worst: {worst_short}", 
             value=f"{worst_reliability:.0f}% on-time", 
@@ -1532,10 +1502,8 @@ def render_insights_panel(raw_pipeline_data, analysis_results):
         
         st.markdown("---")
         
-        c3_1, c3_2, c3_3 = st.columns(3)
-        c3_1.info(cliff_text)
-        c3_2.info(pattern_text)
-        c3_3.info(bias_text)
+        # Displays the cliff text as a full-width banner
+        st.info(cliff_text)
 
 # ==============================================================================
 # 6.4. ANALYTICS CHART BUILDERS
