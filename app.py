@@ -1470,12 +1470,12 @@ def render_insights_panel(raw_pipeline_data, analysis_results):
     min_diff_idx = diffs.idxmin() if len(diffs) > 1 else None
     if min_diff_idx is not None and not pd.isna(min_diff_idx):
         drop = diffs.loc[min_diff_idx]
-        if drop < -8:
+        if drop < -10:
             stop_a_name = merged.loc[min_diff_idx - 1, 'stop_name_rs']
             stop_b_name = merged.loc[min_diff_idx, 'stop_name_rs']
             cliff_text = f"Sharpest reliability drop: {stop_a_name} → {stop_b_name} ({abs(drop):.0f} pp decline)"
         else:
-            cliff_text = "No single stop-to-stop reliability cliff exceeds 8 percentage points — degradation is gradual."
+            cliff_text = "No single stop-to-stop reliability cliff exceeds 10 percentage points — degradation is gradual."
     else:
         cliff_text = "Not enough data to calculate reliability cliff."
 
