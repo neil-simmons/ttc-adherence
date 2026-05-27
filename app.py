@@ -790,9 +790,19 @@ def build_spatial_data(st_filtered, actual_relative_times, window_early, window_
             proj_dist = full_route_line.project(orig_pt)
             new_pt = full_route_line.interpolate(proj_dist)
             new_lon, new_lat = new_pt.x, new_pt.y
-        else: new_lon, new_lat = orig_pt.x, orig_pt.y
-            
-        offset_stops.append({'route_id': route_id, 'stop_id': stop.stop_id, 'stop_name': stop.stop_name, 'stop_lat': new_lat, 'stop_lon': new_lon, 'reliability': reliability_vals[stop.stop_id], 'sample_size': sample_sizes[stop.stop_id]})
+        else: new_lon, new_lat = orig_pt.x, orig_pt.y 
+        offset_stops.append({
+        'route_id': route_id, 
+        'stop_id': stop.stop_id, 
+        'stop_name': stop.stop_name, 
+        'stop_lat': new_lat, 
+        'stop_lon': new_lon,
+        'true_lat': float(stop.stop_lat), # Added
+        'true_lon': float(stop.stop_lon), # Added
+        'reliability': reliability_vals[stop.stop_id], 
+        'sample_size': sample_sizes[stop.stop_id]
+    })
+        
     stops_df = pd.DataFrame(offset_stops)
 
     segments = []
@@ -1150,7 +1160,7 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
         master_stops['route_id'] = master_stops['route_id'].astype(str)
         
         # Group strictly by physical stop metadata to eliminate overlapping concentric rings
-        master_stops = master_stops.groupby(['stop_id', 'stop_name', 'stop_lat', 'stop_lon'], as_index=False, observed=True).agg({
+        master_stops = master_stops.groupby(['stop_id', 'stop_name', 'stop_lat', 'stop_lon', 'true_lat', 'true_lon'], as_index=False, observed=True).agg({
             'route_id': lambda x: ", ".join(sorted(list(set(x)))),  # Merges route labels: "501, 504"
             'rel_weighted': 'sum',
             'sample_size': 'sum'
@@ -1739,7 +1749,7 @@ def build_delay_variance_chart(trip_stats):
 def build_equity_scatter(stops_df, equity_gdf, equity_field, metric_label):
     stops_gdf = gpd.GeoDataFrame(
         stops_df.copy(),
-        geometry=gpd.points_from_xy(stops_df['stop_lon'], stops_df['stop_lat']),
+        geometry=gpd.points_from_xy(stops_df['true_lon'], stops_df['true_lat']),
         crs=LATLON_PROJ
     )
     joined = gpd.sjoin(
@@ -2317,7 +2327,7 @@ with tab_charts:
                     st.caption(f"Accessible data table for Equity Scatter ({selected_label})")
                     stops_gdf = gpd.GeoDataFrame(
                         stops_clean.copy(),
-                        geometry=gpd.points_from_xy(stops_clean['stop_lon'], stops_clean['stop_lat']),
+                        geometry=gpd.points_from_xy(stops_clean['true_lon'], stops_clean['true_lat']),
                         crs=LATLON_PROJ
                     )
                     joined = gpd.sjoin(
