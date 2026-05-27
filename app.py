@@ -199,12 +199,27 @@ def load_route_data(path, selected_route):
     df         = df[mask].copy()
     local_time = local_time[mask]
 
-    hour             = local_time.dt.hour.astype(np.int32)
-    sec_since_midnight = (hour * 3600 + local_time.dt.minute * 60 + local_time.dt.second).astype(np.int32)
-
-    df['op_seconds']  = np.where(hour < 4, sec_since_midnight + 86400, sec_since_midnight).astype(np.int32)
-    op_date           = np.where(hour < 4, (local_time - pd.Timedelta(days=1)).dt.date, local_time.dt.date)
-    df['op_date']     = pd.Series(op_date).astype(str).astype('category')
+    # 1. Identify the absolute start time (minimum system_time) for each trip
+    trip_starts = df.groupby('trip_id', observed=True)['system_time'].transform('min')
+    
+    # 2. Convert trip start times to the local timezone to determine the operational day
+    trip_starts_local = pd.to_datetime(trip_starts, unit='s', utc=True).dt.tz_convert('America/Toronto')
+    start_hour = trip_starts_local.dt.hour
+    
+    # 3. If a trip started before 4:00 AM, assign it to the previous calendar day's service
+    op_date = np.where(
+        start_hour < 4,
+        (trip_starts_local - pd.Timedelta(days=1)).dt.date,
+        trip_starts_local.dt.date
+    )
+    df['op_date'] = pd.Series(op_date, index=df.index).astype(str).astype('category')
+    
+    # 4. Calculate continuous elapsed seconds since midnight of the trip's operational date
+    op_midnight_local = pd.to_datetime(df['op_date'].astype(str)).dt.tz_localize('America/Toronto')
+    op_midnight_epoch = op_midnight_local.astype('int64') // 10**9  # Convert midnight to Unix timestamp
+    
+    # op_seconds is now a continuous delta, free of discontinuities at 4:00 AM
+    df['op_seconds'] = (df['system_time'] - op_midnight_epoch).astype(np.int32)
     df['day_of_week'] = pd.to_datetime(df['op_date']).dt.dayofweek.astype(np.int8)
     df['is_holiday']  = df['op_date'].astype(str).isin(STAT_HOLIDAYS)
 
