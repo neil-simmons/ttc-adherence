@@ -24,6 +24,7 @@ ensure_packages()
 
 import pandas as pd
 import numpy as np
+import gpd as gpd
 import geopandas as gpd
 from shapely.geometry import LineString, Point
 from shapely.ops import substring
@@ -227,6 +228,8 @@ def run_precompute():
                     rel_vals[stop.stop_id] = (hits / len(arr)) * 100
 
                 stops_df = st_filtered[['stop_id', 'stop_name', 'stop_lat', 'stop_lon']].copy()
+                stops_df['true_lat'] = stops_df['stop_lat']
+                stops_df['true_lon'] = stops_df['stop_lon']
                 stops_df['reliability'] = stops_df['stop_id'].map(rel_vals)
                 stops_df['sample_size'] = stops_df['stop_id'].map(sample_sizes)
                 all_stops.append(stops_df)
@@ -265,7 +268,7 @@ def run_precompute():
     print("\nAggregating final network...")
     master_stops = pd.concat(all_stops, ignore_index=True)
     master_stops['rel_w'] = master_stops['reliability'] * master_stops['sample_size']
-    master_stops = master_stops.groupby(['stop_id', 'stop_name', 'stop_lat', 'stop_lon'], as_index=False).agg({'rel_w': 'sum', 'sample_size': 'sum'})
+    master_stops = master_stops.groupby(['stop_id', 'stop_name', 'stop_lat', 'stop_lon', 'true_lat', 'true_lon'], as_index=False).agg({'rel_w': 'sum', 'sample_size': 'sum'})
     master_stops['reliability'] = np.where(master_stops['sample_size'] > 0, master_stops['rel_w'] / master_stops['sample_size'], 0)
     master_stops.drop(columns=['rel_w'], inplace=True)
 
