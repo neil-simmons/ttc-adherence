@@ -1948,7 +1948,7 @@ available_routes = get_available_routes(parquet_path)
 stops, trips, stop_times, shapes = load_gtfs()
 
 if not st.session_state.show_settings:
-    if st.button("⚙️ Open Filter & Analysis Settings", type="primary"):
+    if st.button("⚙️ Run Custom Analysis", type="primary"):
         st.session_state.show_settings = True
         # -------------------------------------------------------------------
         # Shadow State Restoration Logic (Pushes saved values back to widgets)
@@ -1960,7 +1960,7 @@ if not st.session_state.show_settings:
         
 if st.session_state.show_settings:
     with st.container():
-        st.markdown("### ⚙️ Analysis & Filter Settings")
+        st.markdown("### ⚙️ Run Custom Analysis")
         render_filter_panel(available_routes, parquet_path, trips, stop_times, stops, shapes)
         st.markdown("---")
 
@@ -1987,7 +1987,7 @@ with tab_map:
         if not st.session_state.analysis_results:
             precomputed = load_precomputed_network()
             if precomputed:
-                st.info("🗺️ **Showing Default Network Reliability View.** All-Day Weekdays, All Routes. Click the **⚙️ Open Filter & Analysis Settings** button above to run a custom analysis.")
+                st.info("🗺️ **Showing Default Network Reliability View.** All-Day Weekdays, All Routes. Click the **⚙️ Run Custom Analysis** button above to run a custom analysis.")
                 stops_df = pd.DataFrame(precomputed['stops'])
                 segments_df = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
                 
@@ -1998,7 +1998,7 @@ with tab_map:
                 map_instance = KeplerGl(height=600, data={"stops": stops_df, "segments": segments_df}, config=generate_kepler_config())
                 keplergl_static(map_instance, center_map=True)
             else:
-                st.info("🗺️ **Map View is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
+                st.info("🗺️ **Map View is Empty.** Please click the **⚙️ Run Custom Analysis** button above to run an analysis.")
         else:
             st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
             results = st.session_state.analysis_results
@@ -2179,7 +2179,7 @@ with tab_charts:
 
         with tab_spaghetti:
             if not st.session_state.analysis_results:
-                st.info("🍝 **Time-Distance Chart is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
+                st.info("🍝 **Time-Distance Chart is Empty.** Please click the **⚙️ Run Custom Analysis** button above to run an analysis.")
             elif st.session_state.analysis_results.get('is_multi', False):
                 st.warning("⚠️ **Charts Disabled.** Detailed trip visualizations are only available when analyzing a single route.")
             else:
@@ -2256,7 +2256,7 @@ with tab_charts:
 
         with tab_stats:
             if not st.session_state.analysis_results:
-                st.info("📊 **Density Chart is Empty.** Please click the **⚙️ Open Filter & Analysis Settings** button above to run an analysis.")
+                st.info("📊 **Density Chart is Empty.** Please click the **⚙️ Run Custom Analysis** button above to run an analysis.")
             elif st.session_state.analysis_results.get('is_multi', False):
                 st.warning("⚠️ **Charts Disabled.** Detailed density plots are only available when analyzing a single route.")
             else:
@@ -2631,8 +2631,8 @@ with tab_recal:
 
         if not has_analysis:
             st.info(
-                "📅 **No analysis loaded.** Use the **⚙️ Open Filter & Analysis "
-                "Settings** button above to run an analysis. Schedule recalibration "
+                "📅 **No analysis loaded.** Use the **⚙️ Run Custom Analysis "
+                "** button above to run an analysis. Schedule recalibration "
                 "will become available once a single-signature analysis is complete."
             )
         elif is_multi:
