@@ -1216,7 +1216,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
     # Initialize defaults cleanly in session state to avoid Widget API conflict errors
     if "days_selected" not in st.session_state: st.session_state.days_selected = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
     if "time_slider" not in st.session_state: st.session_state.time_slider = (datetime.time(7, 0), datetime.time(9, 0))
-    if "window_slider" not in st.session_state: st.session_state.window_slider = (-15, 120)
+    if "window_slider" not in st.session_state: st.session_state.window_slider = (-60, 120)
     if "time_mode" not in st.session_state: st.session_state.time_mode = "Overlap Mode"
     if "force_t0" not in st.session_state: st.session_state.force_t0 = False
     if "isolated_trips" not in st.session_state: st.session_state.isolated_trips = []
