@@ -24,7 +24,6 @@ ensure_packages()
 
 import pandas as pd
 import numpy as np
-import gpd as gpd
 import geopandas as gpd
 from shapely.geometry import LineString, Point
 from shapely.ops import substring
