@@ -1900,15 +1900,15 @@ def render_recalibration_section(tab_id):
     st.markdown("""
 Suggests adjusted stop arrival times based on observed historical performance.
 The **target percentile** controls how conservative the new schedule is:
-- **50th (median):** Minimises added journey time. Half of trips will still appear late.
+- **50th (median):** Minimises added journey time. Half of trips will still be over 0 seconds late.
 - **75th:** ~75% of trips appear on-time or early. Moderate buffer.
-- **85th:** Industry-standard target. ~85% of trips appear on-time or early.
-- **95th:** Highly conservative. Near-universal on-time appearance at the cost of longer scheduled journey times.
+- **85th:** ~85% of trips appear on-time or early.
+- **95th:** Near-universal on-time appearance at the cost of longer scheduled journey times.
 """)
 
     target_pct = st.slider(
         "Target Percentile",
-        min_value=50, max_value=95, value=85, step=5,
+        min_value=50, max_value=95, value=50, step=5,
         key=f"recal_percentile_slider_{tab_id}",
         help="Higher = more trips appear on-time, but scheduled journey times increase."
     )
