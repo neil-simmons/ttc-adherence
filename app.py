@@ -1459,26 +1459,34 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                 st.rerun()
 
 def render_insights_panel(raw_pipeline_data, analysis_results):
+    is_multi = analysis_results.get('is_multi', False)
     real_stops = analysis_results['stops_df'][analysis_results['stops_df']['stop_lat'].notna()]
-    st_filt = raw_pipeline_data['st_filtered']
-    art = raw_pipeline_data['actual_relative_times']
-    art_str_keys = {str(k): v for k, v in art.items()}
-    rel_sec_map = {str(row.stop_id): row.relative_sec for row in st_filt.itertuples()}
-    trips_analyzed = len(raw_pipeline_data['mode_b_lines'])
-    operating_days = len(set(line['op_date'] for line in raw_pipeline_data['mode_b_lines']))
     weighted_reliability = np.average(real_stops['reliability'], weights=real_stops['sample_size'].clip(lower=1))
+
+    # Gracefully handle missing granular data in multi-route mode
+    if is_multi:
+        trips_analyzed = "N/A"
+        operating_days = "N/A"
+    else:
+        st_filt = raw_pipeline_data['st_filtered']
+        art = raw_pipeline_data['actual_relative_times']
+        art_str_keys = {str(k): v for k, v in art.items()}
+        rel_sec_map = {str(row.stop_id): row.relative_sec for row in st_filt.itertuples()}
+        trips_analyzed = len(raw_pipeline_data['mode_b_lines'])
+        operating_days = len(set(line['op_date'] for line in raw_pipeline_data['mode_b_lines']))
 
     # Insight 3 - Worst Stop
     worst_row = real_stops.loc[real_stops['reliability'].idxmin()]
     worst_stop_id = str(worst_row['stop_id'])
     worst_stop_name = worst_row['stop_name']
     worst_reliability = worst_row['reliability']
-    if worst_stop_id in art_str_keys and len(art_str_keys[worst_stop_id]) > 0 and worst_stop_id in rel_sec_map:
+    
+    if not is_multi and worst_stop_id in art_str_keys and len(art_str_keys[worst_stop_id]) > 0 and worst_stop_id in rel_sec_map:
         delays_sec = [t - rel_sec_map[worst_stop_id] for t in art_str_keys[worst_stop_id]]
         median_delay_min = np.median(delays_sec) / 60.0
         delay_str = f"Typically {median_delay_min:.1f} min late" if median_delay_min > 0.5 else f"Typically {abs(median_delay_min):.1f} min early" if median_delay_min < -0.5 else "Typically on-time"
     else:
-        delay_str = "No timing data"
+        delay_str = "Specific timing variance unavailable in multi-route view"
         
     worst_short = worst_stop_name[:27] + "..." if len(worst_stop_name) > 30 else worst_stop_name
 
@@ -1490,36 +1498,37 @@ def render_insights_panel(raw_pipeline_data, analysis_results):
     best_stop_name = best_row['stop_name']
     best_short = best_stop_name[:27] + "..." if len(best_stop_name) > 30 else best_stop_name
 
-    # Insight 5 - Biggest Reliability Cliff
-    rs_df = real_stops.copy()
-    rs_df['stop_id_str'] = rs_df['stop_id'].astype(str)
-    st_df = st_filt.copy()
-    st_df['stop_id_str'] = st_df['stop_id'].astype(str)
-    merged = pd.merge(rs_df, st_df, on='stop_id_str', how='inner', suffixes=('_rs', '_st'))
-    merged = merged.sort_values('shape_dist_traveled').reset_index(drop=True)
-    
-    diffs = merged['reliability'].diff()
-    min_diff_idx = diffs.idxmin() if len(diffs) > 1 else None
-    if min_diff_idx is not None and not pd.isna(min_diff_idx):
-        drop = diffs.loc[min_diff_idx]
-        if drop < -10:
-            stop_a_name = merged.loc[min_diff_idx - 1, 'stop_name_rs']
-            stop_b_name = merged.loc[min_diff_idx, 'stop_name_rs']
-            cliff_text = f"Sharpest reliability drop: {stop_a_name} → {stop_b_name} ({abs(drop):.0f} pp decline)"
-        else:
-            cliff_text = "No single stop-to-stop reliability cliff exceeds 10 percentage points — degradation is gradual."
+    # Insight 5 - Biggest Reliability Cliff (Disabled for multi-route due to intersecting geometries)
+    if is_multi:
+        cliff_text = "Stop-to-stop reliability cliff calculation is disabled in network mode due to intersecting route geometries."
     else:
-        cliff_text = "Not enough data to calculate reliability cliff."
+        rs_df = real_stops.copy()
+        rs_df['stop_id_str'] = rs_df['stop_id'].astype(str)
+        st_df = st_filt.copy()
+        st_df['stop_id_str'] = st_df['stop_id'].astype(str)
+        merged = pd.merge(rs_df, st_df, on='stop_id_str', how='inner', suffixes=('_rs', '_st'))
+        merged = merged.sort_values('shape_dist_traveled').reset_index(drop=True)
+        
+        diffs = merged['reliability'].diff()
+        min_diff_idx = diffs.idxmin() if len(diffs) > 1 else None
+        if min_diff_idx is not None and not pd.isna(min_diff_idx):
+            drop = diffs.loc[min_diff_idx]
+            if drop < -10:
+                stop_a_name = merged.loc[min_diff_idx - 1, 'stop_name_rs']
+                stop_b_name = merged.loc[min_diff_idx, 'stop_name_rs']
+                cliff_text = f"Sharpest reliability drop: {stop_a_name} → {stop_b_name} ({abs(drop):.0f} pp decline)"
+            else:
+                cliff_text = "No single stop-to-stop reliability cliff exceeds 10 percentage points — degradation is gradual."
+        else:
+            cliff_text = "Not enough data to calculate reliability cliff."
 
     # Layout
     with st.expander("📋 Key Findings from This Analysis", expanded=True):
-        # Adjusted to 3 columns to perfectly fit the 3 top metrics
         col1, col2, col3 = st.columns(3)
         col1.metric("Trips Analyzed", trips_analyzed)
         col2.metric("Operating Days", operating_days)
         col3.metric("Network On-Time Rate", f"{weighted_reliability:.1f}%")
         
-        # Adjusted to 2 columns to perfectly fit the Best/Worst metrics
         c2_1, c2_2 = st.columns(2)
         c2_1.metric(
             label=f"Worst: {worst_short}", 
@@ -1533,8 +1542,6 @@ def render_insights_panel(raw_pipeline_data, analysis_results):
         )
         
         st.markdown("---")
-        
-        # Displays the cliff text as a full-width banner
         st.info(cliff_text)
 
 # ==============================================================================
@@ -1971,7 +1978,7 @@ if st.session_state.show_settings:
         render_filter_panel(available_routes, parquet_path, trips, stop_times, stops, shapes)
         st.markdown("---")
 
-if st.session_state.analysis_results is not None and not st.session_state.analysis_results.get('is_multi', False):
+if st.session_state.analysis_results is not None:
     render_insights_panel(st.session_state.raw_pipeline_data, st.session_state.analysis_results)
 
 # Consolidate top-level to 3 isolated zones
