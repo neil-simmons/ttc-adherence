@@ -1572,21 +1572,21 @@ def build_date_trend_chart(trip_stats):
     sorted_dates = sorted(date_dict.keys())
     if len(sorted_dates) < 2: return go.Figure()
     
-    daily_means = [np.mean(date_dict[d]) for d in sorted_dates]
+    daily_medians = [np.median(date_dict[d]) for d in sorted_dates]
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=sorted_dates, y=daily_means, mode='lines+markers',
+        x=sorted_dates, y=daily_medians, mode='lines+markers',
         marker=dict(size=8, color=TTC_RED, symbol='circle'),
-        line=dict(color=TTC_RED, width=1.8), name='Daily Mean Delay',
-        hovertemplate="Date: %{x}<br>Mean Delay: %{y:.1f} min<extra></extra>"
+        line=dict(color=TTC_RED, width=1.8), name='Daily Median Deviation',
+        hovertemplate="Date: %{x}<br>Median Deviation: %{y:.1f} min<extra></extra>"
     ))
     if len(sorted_dates) >= 7:
-        rolling = pd.Series(daily_means).rolling(window=7, center=True).mean()
+        rolling = pd.Series(daily_medians).rolling(window=7, center=True).mean()
         fig.add_trace(go.Scatter(
             x=sorted_dates, y=rolling, mode='lines',
             line=dict(dash='dot', color='#0072B2', width=1.5),
-            name='7-Day Rolling Mean'
+            name='7-Day Rolling Median'
         ))
     fig.add_trace(go.Scatter(
         x=sorted_dates, y=[0]*len(sorted_dates), mode='lines',
@@ -1594,8 +1594,8 @@ def build_date_trend_chart(trip_stats):
         showlegend=False, hoverinfo='skip'
     ))
     fig.update_layout(
-        title="Daily Mean Trip Delay Over Analysis Period",
-        xaxis_title="Operating Date", yaxis_title="Mean Delay (min)",
+        title="Daily Median Deviation Over Analysis Period",
+        xaxis_title="Operating Date", yaxis_title="Median Deviation (min)",
         template="plotly_white"
     )
     return fig
@@ -1668,7 +1668,7 @@ def build_stop_time_heatmap(trip_stats):
                 if sid in sd and sid in rel_sec_map:
                     delays.append((sd[sid] - rel_sec_map[sid])/60)
             if len(delays) >= 2:
-                row.append(np.mean(delays))
+                row.append(np.median(delays))
             else:
                 row.append(np.nan)
         matrix.append(row)
@@ -1678,11 +1678,11 @@ def build_stop_time_heatmap(trip_stats):
     fig = go.Figure(data=go.Heatmap(
         z=matrix, x=stop_labels, y=bucket_labels,
         colorscale='RdBu_r', zmid=0,
-        colorbar=dict(title="Delay (min)", ticksuffix=" min"),
-        hovertemplate="Stop: %{x}<br>Period: %{y}<br>Mean Delay: %{z:.1f} min<extra></extra>"
+        colorbar=dict(title="Deviation (min)", ticksuffix=" min"),
+        hovertemplate="Stop: %{x}<br>Period: %{y}<br>Median Deviation: %{z:.1f} min<extra></extra>"
     ))
     fig.update_layout(
-        title="Mean Delay by Stop and Time of Day",
+        title="Median Deviation by Stop and Time of Day",
         xaxis=dict(tickangle=45, automargin=True),
         height=max(380, 120 + len(used_buckets) * 70),
         template="plotly_white"
@@ -1717,7 +1717,7 @@ def build_stop_dow_heatmap(trip_stats):
                 if sid in sd and sid in rel_sec_map:
                     delays.append((sd[sid] - rel_sec_map[sid])/60)
             if len(delays) >= 2:
-                row.append(np.mean(delays))
+                row.append(np.median(delays))
             else:
                 row.append(np.nan)
         matrix.append(row)
@@ -1727,17 +1727,17 @@ def build_stop_dow_heatmap(trip_stats):
     fig = go.Figure(data=go.Heatmap(
         z=matrix, x=stop_labels, y=row_labels,
         colorscale='RdBu_r', zmid=0,
-        colorbar=dict(title="Delay (min)", ticksuffix=" min"),
-        hovertemplate="Stop: %{x}<br>Day: %{y}<br>Mean Delay: %{z:.1f} min<extra></extra>"
+        colorbar=dict(title="Deviation (min)", ticksuffix=" min"),
+        hovertemplate="Stop: %{x}<br>Day: %{y}<br>Median Deviation: %{z:.1f} min<extra></extra>"
     ))
     fig.update_layout(
-        title="Mean Delay by Stop and Day of Week",
+        title="Median Deviation by Stop and Day of Week",
         xaxis=dict(tickangle=45, automargin=True),
         height=max(380, 120 + len(used_dows) * 70),
         template="plotly_white"
     )
     return fig
-
+    
 def build_delay_variance_chart(trip_stats):
     fig = go.Figure()
     stop_order = trip_stats['stop_order']
@@ -2433,9 +2433,9 @@ with tab_charts:
                         st.markdown("---")
 
                         if show_date:
-                            st.markdown("#### Daily Mean Delay Over Time")
+                            st.markdown("#### Daily Median Deviation Over Time")
                             st.caption(
-                                "Each point represents the mean per-trip delay across all trips "
+                                "Each point represents the median per-trip deviation across all trips "
                                 "on that operating date. The dotted blue line shows a 7-day rolling "
                                 "average when sufficient dates are available."
                             )
@@ -2444,12 +2444,12 @@ with tab_charts:
                             announce_sr("Date trend chart rendered.")
                             
                             with st.expander("📋 View data as accessible table", expanded=False):
-                                st.caption("Accessible data table for Daily Mean Delay Over Time")
+                                st.caption("Accessible data table for Daily Median Deviation Over Time")
                                 date_dict = {}
                                 for d, delay in zip(trip_stats['per_trip_date'], trip_stats['per_trip_mean_delay']):
                                     if d and not np.isnan(delay):
                                         date_dict.setdefault(d, []).append(delay/60)
-                                data = [{"Date": d, "N Trips": len(date_dict[d]), "Mean Delay (min)": np.mean(date_dict[d])} for d in sorted(date_dict.keys())]
+                                data = [{"Date": d, "N Trips": len(date_dict[d]), "Median Deviation (min)": np.median(date_dict[d])} for d in sorted(date_dict.keys())]
                                 st.dataframe(pd.DataFrame(data), hide_index=True)
                         else:
                             st.info(
@@ -2541,19 +2541,19 @@ with tab_charts:
                     st.markdown("---")
 
                     if show_time_hm:
-                        st.markdown("#### Mean Delay — Stop × Time of Day")
+                        st.markdown("#### Median Deviation — Stop × Time of Day")
                         st.caption(
-                            "Each cell shows the mean arrival delay (minutes) at that stop "
+                            "Each cell shows the median arrival deviation (minutes) at that stop "
                             "during that time period. Red indicates late arrivals; blue indicates "
                             "early arrivals; white indicates on-time performance. Grey cells have "
                             "fewer than 2 observations and are shown as not-a-number."
                         )
                         fig = build_stop_time_heatmap(trip_stats)
                         st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_time_hm")
-                        announce_sr("Stop by time-of-day delay heatmap rendered.")
+                        announce_sr("Stop by time-of-day deviation heatmap rendered.")
                         
                         with st.expander("📋 View data as accessible table", expanded=False):
-                            st.caption("Accessible data table for Mean Delay by Stop and Time of Day")
+                            st.caption("Accessible data table for Median Deviation by Stop and Time of Day")
                             buckets = {b[0]: [] for b in TIME_BUCKETS}
                             for line in trip_stats['mode_b_lines']:
                                 anc = line.get('anchor_sec')
@@ -2574,7 +2574,7 @@ with tab_charts:
                                         sd = line.get('stop_delays', {})
                                         if sid in sd and sid in trip_stats['rel_sec_map']:
                                             delays.append((sd[sid] - trip_stats['rel_sec_map'][sid])/60)
-                                    row_data[clean_stop_name(stop_name)] = round(np.mean(delays), 1) if len(delays) >= 2 else np.nan
+                                    row_data[clean_stop_name(stop_name)] = round(np.median(delays), 1) if len(delays) >= 2 else np.nan
                                 df_data[b_name] = row_data
                             df_table = pd.DataFrame.from_dict(df_data, orient='index')
                             st.dataframe(df_table)
@@ -2589,17 +2589,17 @@ with tab_charts:
                     st.markdown("---")
 
                     if show_dow_hm:
-                        st.markdown("#### Mean Delay — Stop × Day of Week")
+                        st.markdown("#### Median Deviation — Stop × Day of Week")
                         st.caption(
-                            "Each cell shows the mean arrival delay at that stop on that day "
+                            "Each cell shows the median arrival deviation at that stop on that day "
                             "of the week. Same colour encoding as the time-of-day heatmap above."
                         )
                         fig = build_stop_dow_heatmap(trip_stats)
                         st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG, key="chart_dow_hm")
-                        announce_sr("Stop by day-of-week delay heatmap rendered.")
+                        announce_sr("Stop by day-of-week deviation heatmap rendered.")
                         
                         with st.expander("📋 View data as accessible table", expanded=False):
-                            st.caption("Accessible data table for Mean Delay by Stop and Day of Week")
+                            st.caption("Accessible data table for Median Deviation by Stop and Day of Week")
                             dow_dict = {d: [] for d in range(7)}
                             for i, d in enumerate(trip_stats['per_trip_dow']):
                                 if d is not None:
@@ -2615,7 +2615,7 @@ with tab_charts:
                                         sd = line.get('stop_delays', {})
                                         if sid in sd and sid in trip_stats['rel_sec_map']:
                                             delays.append((sd[sid] - trip_stats['rel_sec_map'][sid])/60)
-                                    row_data[clean_stop_name(stop_name)] = round(np.mean(delays), 1) if len(delays) >= 2 else np.nan
+                                    row_data[clean_stop_name(stop_name)] = round(np.median(delays), 1) if len(delays) >= 2 else np.nan
                                 df_data[DOW_LABELS[d]] = row_data
                             df_table = pd.DataFrame.from_dict(df_data, orient='index')
                             st.dataframe(df_table)
