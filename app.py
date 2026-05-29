@@ -2006,7 +2006,7 @@ with tab_map:
                 key="color_theme",
             )
         with col2:
-            # NEW: This radio button forces Streamlit to only render ONE map per run, saving the server.
+            # Forces Streamlit to only render ONE map per run, saving the server.
             map_view = st.radio(
                 "🗺️ Select Map View",
                 options=["🚦 Route Reliability Map", "🏘️ Neighbourhood Equity Map"],
@@ -2091,23 +2091,23 @@ with tab_map:
         # =========================================================
         else:
             st.markdown("### 🏘️ Equity Context Map")
-            st.markdown("Neighbourhood-level equity indicators from Statistics Canada 2021 Census, overlaid with transit reliability. **Use the layer panel (top-left of the map) to toggle between equity indicators.**")
+            st.markdown("Neighbourhood-level equity indicators from Statistics Canada 2021 Census and City of Toronto Open Data, overlaid with transit reliability. **Use the layer panel (top-left of the map) to toggle between equity indicators.** Transit segments and stops reflect the current analysis if one has been run, otherwise show the all-routes precomputed network.")
             
             with st.expander("📖 Layer Guide", expanded=False):
                 st.markdown("""
     | Layer Name | What It Shows |
     |---|---|
     | Median Household Income ($) | Neighbourhood median household income |
-    | Low-Income Households (%) | Share of residents below low-income measure |
-    | Transit Commuters (%) | Share of employed residents commuting by transit |
+    | Low-Income Households (%) | Share of residents below low-income measure (after tax) |
+    | Transit Commuters (%) — Transit Dependence | Share of employed residents commuting by transit |
     | Visible Minority Population (%) | Share identifying as visible minority |
-    | Recent Immigrants (%) | Share who immigrated within 5 years |
+    | Recent Immigrants — Last 5 Years (%) | Share who immigrated within 5 years |
     | Seniors 65+ (%) | Share of population aged 65 or older |
     """)
             
             equity_gdf = load_equity_data()
             
-            # SIMPLIFICATION APPLIED HERE to stop OOM crashes
+            # ✅ NEW: Simplify the hidden census boundaries before rendering to prevent memory crashes
             display_equity = equity_gdf.copy()
             if not display_equity.empty and 'geometry' in display_equity.columns:
                 display_equity['geometry'] = display_equity['geometry'].simplify(0.0005, preserve_topology=True)
@@ -2115,6 +2115,7 @@ with tab_map:
             t_stops = None
             t_segs = None
             
+            # Use active custom analysis (single or multi) if available
             if st.session_state.analysis_results is not None:
                 t_stops = st.session_state.analysis_results.get('stops_df')
                 t_segs = st.session_state.analysis_results.get('segments_df')
@@ -2126,6 +2127,8 @@ with tab_map:
                     t_stops, t_segs = inject_legend_anchors(t_stops, t_segs)
                     
             equity_config = generate_equity_kepler_config()
+            
+            # ✅ CHANGED: Use the simplified 'display_equity' instead of the raw 'equity_gdf'
             data_dict = {"equity": display_equity}
             
             if t_stops is not None and t_segs is not None and not t_stops.empty and not t_segs.empty:
@@ -2134,20 +2137,32 @@ with tab_map:
             else:
                 layers = equity_config["config"]["visState"]["layers"]
                 equity_config["config"]["visState"]["layers"] = [l for l in layers if l["id"] not in ("segments", "stops")]
+                
                 layer_order = equity_config["config"]["visState"]["layerOrder"]
                 equity_config["config"]["visState"]["layerOrder"] = [lo for lo in layer_order if lo not in ("segments", "stops")]
+                
                 tooltip_fields = equity_config["config"]["visState"]["interactionConfig"]["tooltip"]["fieldsToShow"]
-                if "segments" in tooltip_fields: del tooltip_fields["segments"]
-                if "stops" in tooltip_fields: del tooltip_fields["stops"]
+                if "segments" in tooltip_fields:
+                    del tooltip_fields["segments"]
+                if "stops" in tooltip_fields:
+                    del tooltip_fields["stops"]
                     
-            equity_map = KeplerGl(height=650, data=data_dict, config=equity_config)
+            equity_map = KeplerGl(id="equity_map_view", height=650, data=data_dict, config=equity_config)
             keplergl_static(equity_map, center_map=True)
 
-            # Accessible Fallback for Equity Data
+            # -------------------------------------------------------------------------
+            # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR CENSUS NEIGHBOURHOOD EQUITY DATA
+            # -------------------------------------------------------------------------
             if equity_gdf is not None and not equity_gdf.empty:
                 st.markdown("<br>", unsafe_allow_html=True)
                 with st.expander("🏘️ View Neighbourhood Census Equity Metrics as an Accessible Table", expanded=False):
-                    display_eq_table = pd.DataFrame(equity_gdf).drop(columns=['geometry'], errors='ignore').sort_values('area_name')
+                    st.caption("This collapsible database lists Statistics Canada 2021 Census equity indicators across municipal neighbourhoods, serving as an accessible high-contrast text alternative to the multi-layered visual map above.")
+                    
+                    display_eq_table = pd.DataFrame(equity_gdf).copy()
+                    if 'geometry' in display_eq_table.columns:
+                        display_eq_table = display_eq_table.drop(columns=['geometry'])
+                    
+                    display_eq_table = display_eq_table.sort_values('area_name')
                     st.dataframe(
                         display_eq_table[[
                             'area_name', 'median_income', 'low_income_pct', 
@@ -2160,106 +2175,14 @@ with tab_map:
                             'low_income_pct': st.column_config.NumberColumn("Low-Income Households", format="%.1f%%"),
                             'transit_commute_pct': st.column_config.NumberColumn("Transit Commute share", format="%.1f%%"),
                             'visible_minority_pct': st.column_config.NumberColumn("Visible Minority Share", format="%.1f%%"),
-                            'recent_immigrant_pct': st.column_config.NumberColumn("Recent Immigrants", format="%.1f%%"),
+                            'recent_immigrant_pct': st.column_config.NumberColumn("Recent Immigrants (Last 5 Yrs)", format="%.1f%%"),
                             'senior_pct': st.column_config.NumberColumn("Seniors 65+", format="%.1f%%")
                         },
-                        use_container_width=True, hide_index=True
+                        use_container_width=True,
+                        hide_index=True
                     )
 
-        st.markdown("---")
-        st.markdown("### 🏘️ Equity Context Map")
-        st.markdown("Neighbourhood-level equity indicators from Statistics Canada 2021 Census and City of Toronto Open Data, overlaid with transit reliability. **Use the layer panel (top-left of the map) to toggle between equity indicators.** Transit segments and stops reflect the current analysis if one has been run, otherwise show the all-routes precomputed network.")
-        
-        with st.expander("📖 Layer Guide", expanded=False):
-            st.markdown("""
-| Layer Name | What It Shows |
-|---|---|
-| Median Household Income ($) | Neighbourhood median household income |
-| Low-Income Households (%) | Share of residents below low-income measure (after tax) |
-| Transit Commuters (%) — Transit Dependence | Share of employed residents commuting by transit |
-| Visible Minority Population (%) | Share identifying as visible minority |
-| Recent Immigrants — Last 5 Years (%) | Share who immigrated within 5 years |
-| Seniors 65+ (%) | Share of population aged 65 or older |
-""")
-        
-        equity_gdf = load_equity_data()
-        
-        # ✅ NEW: Simplify the hidden census boundaries before rendering to prevent memory crashes
-        display_equity = equity_gdf.copy()
-        if not display_equity.empty and 'geometry' in display_equity.columns:
-            display_equity['geometry'] = display_equity['geometry'].simplify(0.0005, preserve_topology=True)
-        
-        t_stops = None
-        t_segs = None
-        
-        # Changed: Remove the 'is_multi' restriction so any active custom analysis (single or multi) is utilized
-        if st.session_state.analysis_results is not None:
-            t_stops = st.session_state.analysis_results.get('stops_df')
-            t_segs = st.session_state.analysis_results.get('segments_df')
-        else:
-            precomputed = load_precomputed_network()
-            if precomputed:
-                t_stops = pd.DataFrame(precomputed['stops'])
-                t_segs = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
-                t_stops, t_segs = inject_legend_anchors(t_stops, t_segs)
-                
-        equity_config = generate_equity_kepler_config()
-        
-        # ✅ CHANGED: Use the simplified 'display_equity' instead of the raw 'equity_gdf'
-        data_dict = {"equity": display_equity}
-        
-        if t_stops is not None and t_segs is not None and not t_stops.empty and not t_segs.empty:
-            data_dict["stops"] = t_stops
-            data_dict["segments"] = t_segs
-        else:
-            layers = equity_config["config"]["visState"]["layers"]
-            equity_config["config"]["visState"]["layers"] = [l for l in layers if l["id"] not in ("segments", "stops")]
-            
-            layer_order = equity_config["config"]["visState"]["layerOrder"]
-            equity_config["config"]["visState"]["layerOrder"] = [lo for lo in layer_order if lo not in ("segments", "stops")]
-            
-            tooltip_fields = equity_config["config"]["visState"]["interactionConfig"]["tooltip"]["fieldsToShow"]
-            if "segments" in tooltip_fields:
-                del tooltip_fields["segments"]
-            if "stops" in tooltip_fields:
-                del tooltip_fields["stops"]
-                
-        equity_map = KeplerGl(id="equity_map_view", height=650, data=data_dict, config=equity_config)
-        keplergl_static(equity_map, center_map=True)
-
-        # -------------------------------------------------------------------------
-        # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR CENSUS NEIGHBOURHOOD EQUITY DATA
-        # -------------------------------------------------------------------------
-        if equity_gdf is not None and not equity_gdf.empty:
-            st.markdown("<br>", unsafe_allow_html=True)
-            with st.expander("🏘️ View Neighbourhood Census Equity Metrics as an Accessible Table", expanded=False):
-                st.caption("This collapsible database lists Statistics Canada 2021 Census equity indicators across municipal neighbourhoods, serving as an accessible high-contrast text alternative to the multi-layered visual map above.")
-                
-                display_equity = pd.DataFrame(equity_gdf).copy()
-                if 'geometry' in display_equity.columns:
-                    display_equity = display_equity.drop(columns=['geometry'])
-                
-                display_equity = display_equity.sort_values('area_name')
-                st.dataframe(
-                    display_equity[[
-                        'area_name', 'median_income', 'low_income_pct', 
-                        'transit_commute_pct', 'visible_minority_pct', 
-                        'recent_immigrant_pct', 'senior_pct'
-                    ]],
-                    column_config={
-                        'area_name': st.column_config.TextColumn("Neighbourhood Name"),
-                        'median_income': st.column_config.NumberColumn("Median Household Income", format="$%d"),
-                        'low_income_pct': st.column_config.NumberColumn("Low-Income Households", format="%.1f%%"),
-                        'transit_commute_pct': st.column_config.NumberColumn("Transit Commute share", format="%.1f%%"),
-                        'visible_minority_pct': st.column_config.NumberColumn("Visible Minority Share", format="%.1f%%"),
-                        'recent_immigrant_pct': st.column_config.NumberColumn("Recent Immigrants (Last 5 Yrs)", format="%.1f%%"),
-                        'senior_pct': st.column_config.NumberColumn("Seniors 65+", format="%.1f%%")
-                    },
-                    use_container_width=True,
-                    hide_index=True
-                )
-        
-        st.caption("Data: Statistics Canada 2021 Census via City of Toronto Neighbourhood Profiles (open.toronto.ca). All data used under open government licence.")
+            st.caption("Data: Statistics Canada 2021 Census via City of Toronto Neighbourhood Profiles (open.toronto.ca). All data used under open government licence.")
     
     render_map_tab()
 
