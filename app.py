@@ -2207,47 +2207,25 @@ with tab_charts:
             else:
                 st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
                 
-                gmaps_link_container = st.empty()
-                
-                event = st.plotly_chart(
+                # Plotly renders completely natively. Zooming/panning runs in-browser only (No Python execution).
+                st.plotly_chart(
                     st.session_state.analysis_results['fig_B'],
                     use_container_width=True,
                     height=900,
                     config=PLOTLY_CONFIG,
-                    on_select="rerun",
-                    selection_mode=["points"],
-                    key="fig_b_chart" 
+                    key="fig_b_chart"
                 )
-                
-                if event and event.selection.get("points"):
-                    pt = event.selection["points"][0]
-                    if "customdata" in pt and len(pt["customdata"]) >= 6:
-                        op_date = pt["customdata"][0]
-                        t_id = pt["customdata"][2]
-                        lat = pt["customdata"][4]
-                        lon = pt["customdata"][5]
-                        
-                        gmaps_link_container.success(
-                            f"📍 **Selected {op_date} | Trip {t_id}:** "
-                            f"[**Click here to open this location in Google Maps**]"
-                            f"(https://www.google.com/maps/search/?api=1&query={lat},{lon})"
-                        )
-                    else:
-                        gmaps_link_container.info("Click a specific coordinate point on a trip line to get a Google Maps link.")
-                else:
-                    gmaps_link_container.caption("👉 Click any data point on the chart to generate a Google Maps link for that exact location.")
 
                 st.info(f"Trips with missing lines between points reflect periods where GPS ping frequency was under {MAX_ALLOWED_PING_GAP_SEC} seconds. These periods are left out in calculations.")
-                # ---------------------------------------------------------------------
-                # ADDITIVE KEYBOARD-ACCESSIBLE GOOGLE MAPS LINK LOOKUP alternative
-                # ---------------------------------------------------------------------
+                
                 st.markdown("<br>", unsafe_allow_html=True)
                 
-                # ISOLATED FRAGMENT: Changing dropdowns here no longer triggers a Plotly re-render
+                # ISOLATED FRAGMENT: Changing dropdowns here triggers instantly, without reloading the chart
                 @st.fragment
-                def render_keyboard_nav():
-                    with st.expander("⌨️ Keyboard Navigation Alternative for Spaghetti Chart Points", expanded=False):
-                        st.caption("Plotly canvas charts can be difficult to control using keyboard-only commands. Use these dropdown menus as a semantic, accessible interface to generate the exact same Google Maps links.")
+                def render_point_lookup():
+                    with st.expander("📍 Look up coordinates & generate Google Maps Links", expanded=False):
+                        st.markdown('<div class="sr-only">Accessible text alternative to the Time-Distance chart above.</div>', unsafe_allow_html=True)
+                        st.caption("Select a specific trip and time below to generate a Google Maps link for that exact location. Fully navigable via keyboard.")
                         raw_lines = st.session_state.raw_pipeline_data.get('mode_b_lines', [])
                         if raw_lines:
                             line_options = {idx: f"{item['op_date']} | Trip ID: {item['t_id']} (Departed: {item['start_time']})" for idx, item in enumerate(raw_lines)}
@@ -2255,7 +2233,7 @@ with tab_charts:
                                 "Select Target Active Run", 
                                 options=list(line_options.keys()), 
                                 format_func=lambda idx: line_options[idx],
-                                key="keyboard_run_selector"
+                                key="point_run_selector"
                             )
                             
                             chosen_line_data = raw_lines[selected_line_idx]
@@ -2267,7 +2245,7 @@ with tab_charts:
                                     "Select Logged Telemetry Point", 
                                     options=list(point_options.keys()), 
                                     format_func=lambda idx: point_options[idx],
-                                    key="keyboard_point_selector"
+                                    key="point_coord_selector"
                                 )
                                 
                                 final_lat = chosen_line_data['lat'][selected_point_idx]
@@ -2275,13 +2253,13 @@ with tab_charts:
                                 
                                 st.success(
                                     f"📍 **Coordinates Resolved:** "
-                                    f"[**Click here to view this location in Google Maps**]"
+                                    f"[**Click here to open this location in Google Maps**]"
                                     f"(https://www.google.com/maps/search/?api=1&query={final_lat},{final_lon})"
                                 )
                             else:
                                 st.info("No geospatial records are available for this specific run.")
                 
-                render_keyboard_nav() # Call the isolated fragment
+                render_point_lookup()
 
         with tab_stats:
             if not st.session_state.analysis_results:
