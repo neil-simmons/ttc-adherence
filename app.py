@@ -1127,8 +1127,8 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
 
     st.session_state.analysis_results = {
         'is_multi': False, 
-        'fig_A_json': fig_A.to_json(), 
-        'fig_B_json': fig_B.to_json(), 
+        'fig_A': fig_A, 
+        'fig_B': fig_B, 
         'stops_df': stops_df, 
         'segments_df': segments_df, 
         'kepler_config': generate_kepler_config()
@@ -2150,18 +2150,8 @@ with tab_map:
             if "stops" in tooltip_fields:
                 del tooltip_fields["stops"]
                 
-        # Gate the heavy WebGL render behind a user action
-        if 'show_equity_map' not in st.session_state:
-            st.session_state.show_equity_map = False
-            
-        if not st.session_state.show_equity_map:
-            if st.button("🏘️ Load Interactive Equity Context Map"):
-                st.session_state.show_equity_map = True
-                st.rerun() # Local rerun to reveal map
-                
-        if st.session_state.show_equity_map:
-            equity_map = KeplerGl(height=650, data=data_dict, config=equity_config)
-            keplergl_static(equity_map, center_map=True)
+        equity_map = KeplerGl(height=650, data=data_dict, config=equity_config)
+        keplergl_static(equity_map, center_map=True)
 
         # -------------------------------------------------------------------------
         # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR CENSUS NEIGHBOURHOOD EQUITY DATA
@@ -2219,17 +2209,14 @@ with tab_charts:
                 
                 gmaps_link_container = st.empty()
                 
-                # Deserialize from JSON
-                fig_B = pio.from_json(st.session_state.analysis_results['fig_B_json'])
-                
                 event = st.plotly_chart(
-                    fig_B,
+                    st.session_state.analysis_results['fig_B'],
                     use_container_width=True,
                     height=900,
                     config=PLOTLY_CONFIG,
                     on_select="rerun",
                     selection_mode=["points"],
-                    key="fig_b_chart"  # Stable key prevents session drift on clicks
+                    key="fig_b_chart" 
                 )
                 
                 if event and event.selection.get("points"):
@@ -2255,40 +2242,46 @@ with tab_charts:
                 # ADDITIVE KEYBOARD-ACCESSIBLE GOOGLE MAPS LINK LOOKUP alternative
                 # ---------------------------------------------------------------------
                 st.markdown("<br>", unsafe_allow_html=True)
-                with st.expander("⌨️ Keyboard Navigation Alternative for Spaghetti Chart Points", expanded=False):
-                    st.caption("Plotly canvas charts can be difficult to control using keyboard-only commands. Use these dropdown menus as a semantic, accessible interface to generate the exact same Google Maps links.")
-                    raw_lines = st.session_state.raw_pipeline_data.get('mode_b_lines', [])
-                    if raw_lines:
-                        line_options = {idx: f"{item['op_date']} | Trip ID: {item['t_id']} (Departed: {item['start_time']})" for idx, item in enumerate(raw_lines)}
-                        selected_line_idx = st.selectbox(
-                            "Select Target Active Run", 
-                            options=list(line_options.keys()), 
-                            format_func=lambda idx: line_options[idx],
-                            key="keyboard_run_selector"
-                        )
-                        
-                        chosen_line_data = raw_lines[selected_line_idx]
-                        valid_point_coords = [(idx, abs_time, latitude, longitude) for idx, (abs_time, latitude, longitude) in enumerate(zip(chosen_line_data['abs_time'], chosen_line_data['lat'], chosen_line_data['lon'])) if latitude is not None and longitude is not None]
-                        
-                        if valid_point_coords:
-                            point_options = {idx: f"Time: {abs_time} (Lat: {latitude:.5f}, Lon: {longitude:.5f})" for idx, abs_time, latitude, longitude in valid_point_coords}
-                            selected_point_idx = st.selectbox(
-                                "Select Logged Telemetry Point", 
-                                options=list(point_options.keys()), 
-                                format_func=lambda idx: point_options[idx],
-                                key="keyboard_point_selector"
+                
+                # ISOLATED FRAGMENT: Changing dropdowns here no longer triggers a Plotly re-render
+                @st.fragment
+                def render_keyboard_nav():
+                    with st.expander("⌨️ Keyboard Navigation Alternative for Spaghetti Chart Points", expanded=False):
+                        st.caption("Plotly canvas charts can be difficult to control using keyboard-only commands. Use these dropdown menus as a semantic, accessible interface to generate the exact same Google Maps links.")
+                        raw_lines = st.session_state.raw_pipeline_data.get('mode_b_lines', [])
+                        if raw_lines:
+                            line_options = {idx: f"{item['op_date']} | Trip ID: {item['t_id']} (Departed: {item['start_time']})" for idx, item in enumerate(raw_lines)}
+                            selected_line_idx = st.selectbox(
+                                "Select Target Active Run", 
+                                options=list(line_options.keys()), 
+                                format_func=lambda idx: line_options[idx],
+                                key="keyboard_run_selector"
                             )
                             
-                            final_lat = chosen_line_data['lat'][selected_point_idx]
-                            final_lon = chosen_line_data['lon'][selected_point_idx]
+                            chosen_line_data = raw_lines[selected_line_idx]
+                            valid_point_coords = [(idx, abs_time, latitude, longitude) for idx, (abs_time, latitude, longitude) in enumerate(zip(chosen_line_data['abs_time'], chosen_line_data['lat'], chosen_line_data['lon'])) if latitude is not None and longitude is not None]
                             
-                            st.success(
-                                f"📍 **Coordinates Resolved:** "
-                                f"[**Click here to view this location in Google Maps**]"
-                                f"(https://www.google.com/maps/search/?api=1&query={final_lat},{final_lon})"
-                            )
-                        else:
-                            st.info("No geospatial records are available for this specific run.")
+                            if valid_point_coords:
+                                point_options = {idx: f"Time: {abs_time} (Lat: {latitude:.5f}, Lon: {longitude:.5f})" for idx, abs_time, latitude, longitude in valid_point_coords}
+                                selected_point_idx = st.selectbox(
+                                    "Select Logged Telemetry Point", 
+                                    options=list(point_options.keys()), 
+                                    format_func=lambda idx: point_options[idx],
+                                    key="keyboard_point_selector"
+                                )
+                                
+                                final_lat = chosen_line_data['lat'][selected_point_idx]
+                                final_lon = chosen_line_data['lon'][selected_point_idx]
+                                
+                                st.success(
+                                    f"📍 **Coordinates Resolved:** "
+                                    f"[**Click here to view this location in Google Maps**]"
+                                    f"(https://www.google.com/maps/search/?api=1&query={final_lat},{final_lon})"
+                                )
+                            else:
+                                st.info("No geospatial records are available for this specific run.")
+                
+                render_keyboard_nav() # Call the isolated fragment
 
         with tab_stats:
             if not st.session_state.analysis_results:
@@ -2297,11 +2290,7 @@ with tab_charts:
                 st.warning("⚠️ **Charts Disabled.** Detailed density plots are only available when analyzing a single route.")
             else:
                 st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
-                
-                # Deserialize from JSON
-                fig_A = pio.from_json(st.session_state.analysis_results['fig_A_json'])
-                
-                st.plotly_chart(fig_A, use_container_width=True, height=900, config=PLOTLY_CONFIG, key="fig_a_chart")
+                st.plotly_chart(st.session_state.analysis_results['fig_A'], use_container_width=True, height=900, config=PLOTLY_CONFIG, key="fig_a_chart")
 
         with tab_analytics:
             has_analysis = st.session_state.analysis_results is not None
