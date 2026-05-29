@@ -2028,7 +2028,7 @@ with tab_map:
                     
                     stops_df, segments_df = inject_legend_anchors(stops_df, segments_df)
                     
-                    map_instance = KeplerGl(height=600, data={"stops": stops_df, "segments": segments_df}, config=generate_kepler_config())
+                    map_instance = KeplerGl(id="route_map_default", height=600, data={"stops": stops_df, "segments": segments_df}, config=generate_kepler_config())
                     keplergl_static(map_instance, center_map=True)
                 else:
                     st.info("🗺️ **Map View is Empty.** Please click the **⚙️ Run Custom Analysis** button above to run an analysis.")
@@ -2036,7 +2036,7 @@ with tab_map:
                 st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
                 results = st.session_state.analysis_results
                 if 'segments_df' in results and not results['segments_df'].empty:
-                    map_instance = KeplerGl(height=600, data={"stops": results['stops_df'], "segments": results['segments_df']}, config=generate_kepler_config())
+                    map_instance = KeplerGl(id="route_map_custom", height=600, data={"stops": results['stops_df'], "segments": results['segments_df']}, config=generate_kepler_config())
                     keplergl_static(map_instance, center_map=True)
                 else:
                     st.warning("Spatial geometry could not be built for this route.")
@@ -2224,7 +2224,7 @@ with tab_map:
             if "stops" in tooltip_fields:
                 del tooltip_fields["stops"]
                 
-        equity_map = KeplerGl(height=650, data=data_dict, config=equity_config)
+        equity_map = KeplerGl(id="equity_map_view", height=650, data=data_dict, config=equity_config)
         keplergl_static(equity_map, center_map=True)
 
         # -------------------------------------------------------------------------
