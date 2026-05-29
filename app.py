@@ -1055,7 +1055,7 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         "<b>Distance:</b> %{y:.2f} km<br>"
         "<b>Rel Time:</b> %{x:.1f} mins<br>"
         "<b>Avg Speed (Last Segment):</b> %{customdata[6]:.1f} km/h<br>"  # Added speed to hover
-        "<i>(Click point to get Google Maps link)</i>"
+        "<i>(Use this information to get Google Maps link below)</i>"
         "<extra></extra>" 
     )
 
