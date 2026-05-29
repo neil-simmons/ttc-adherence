@@ -3,4 +3,4 @@ base="light"
 primaryColor="#DA251D"
 
 [server]
-maxMessageSize = 300
+maxMessageSize = 1024
