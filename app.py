@@ -2006,7 +2006,6 @@ with tab_map:
                 key="color_theme",
             )
         with col2:
-            # NEW: This radio button forces Streamlit to only render ONE map per run, saving the server.
             map_view = st.radio(
                 "🗺️ Select Map View",
                 options=["🚦 Route Reliability Map", "🏘️ Neighbourhood Equity Map"],
@@ -2019,152 +2018,156 @@ with tab_map:
         # VIEW 1: ROUTE RELIABILITY MAP
         # =========================================================
         if map_view == "🚦 Route Reliability Map":
-            if not st.session_state.analysis_results:
-                precomputed = load_precomputed_network()
-                if precomputed:
-                    st.info("🗺️ **Showing Default Network Reliability View.** All-Day Weekdays, All Routes. Click the **⚙️ Run Custom Analysis** button above to run a custom analysis.")
-                    stops_df = pd.DataFrame(precomputed['stops'])
-                    segments_df = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
-                    
-                    stops_df, segments_df = inject_legend_anchors(stops_df, segments_df)
-                    
-                    map_instance = KeplerGl(height=600, data={"stops": stops_df, "segments": segments_df}, config=generate_kepler_config())
-                    keplergl_static(map_instance, center_map=True)
+            # ✅ Unique container key forces React to completely destroy this block when switching away
+            with st.container(key="route_map_block"):
+                if not st.session_state.analysis_results:
+                    precomputed = load_precomputed_network()
+                    if precomputed:
+                        st.info("🗺️ **Showing Default Network Reliability View.** All-Day Weekdays, All Routes. Click the **⚙️ Run Custom Analysis** button above to run a custom analysis.")
+                        stops_df = pd.DataFrame(precomputed['stops'])
+                        segments_df = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
+                        
+                        stops_df, segments_df = inject_legend_anchors(stops_df, segments_df)
+                        
+                        map_instance = KeplerGl(id="route_map_default", height=600, data={"stops": stops_df, "segments": segments_df}, config=generate_kepler_config())
+                        keplergl_static(map_instance, center_map=True)
+                    else:
+                        st.info("🗺️ **Map View is Empty.** Please click the **⚙️ Run Custom Analysis** button above to run an analysis.")
                 else:
-                    st.info("🗺️ **Map View is Empty.** Please click the **⚙️ Run Custom Analysis** button above to run an analysis.")
-            else:
-                st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
-                results = st.session_state.analysis_results
-                if 'segments_df' in results and not results['segments_df'].empty:
-                    map_instance = KeplerGl(height=600, data={"stops": results['stops_df'], "segments": results['segments_df']}, config=generate_kepler_config())
-                    keplergl_static(map_instance, center_map=True)
-                else:
-                    st.warning("Spatial geometry could not be built for this route.")
+                    st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
+                    results = st.session_state.analysis_results
+                    if 'segments_df' in results and not results['segments_df'].empty:
+                        map_instance = KeplerGl(id="route_map_custom", height=600, data={"stops": results['stops_df'], "segments": results['segments_df']}, config=generate_kepler_config())
+                        keplergl_static(map_instance, center_map=True)
+                    else:
+                        st.warning("Spatial geometry could not be built for this route.")
 
-            # Accessible Fallback for Route Map
-            active_stops_df = st.session_state.analysis_results.get('stops_df') if st.session_state.analysis_results else None
-            active_segments_df = st.session_state.analysis_results.get('segments_df') if st.session_state.analysis_results else None
-            is_custom = bool(st.session_state.analysis_results)
+                # Accessible Fallback for Route Map
+                active_stops_df = st.session_state.analysis_results.get('stops_df') if st.session_state.analysis_results else None
+                active_segments_df = st.session_state.analysis_results.get('segments_df') if st.session_state.analysis_results else None
+                is_custom = bool(st.session_state.analysis_results)
 
-            if not is_custom:
-                pre_network = load_precomputed_network()
-                if pre_network:
-                    active_stops_df = pd.DataFrame(pre_network['stops'])
-                    active_segments_df = gpd.GeoDataFrame.from_features(pre_network['segments']['features'])
+                if not is_custom:
+                    pre_network = load_precomputed_network()
+                    if pre_network:
+                        active_stops_df = pd.DataFrame(pre_network['stops'])
+                        active_segments_df = gpd.GeoDataFrame.from_features(pre_network['segments']['features'])
 
-            if active_stops_df is not None and not active_stops_df.empty:
-                st.markdown("<br>", unsafe_allow_html=True)
-                with st.expander("📊 View Map Stops and Segments as an Accessible Table", expanded=False):
-                    st.caption("This collapsible data table acts as an accessible, high-contrast text alternative to the visual map representation.")
-                    clean_display_stops = active_stops_df[active_stops_df['stop_lat'].notna()].copy()
-                    if 'stop_name' in clean_display_stops.columns:
-                        clean_display_stops['stop_name'] = clean_display_stops['stop_name'].astype(str)
+                if active_stops_df is not None and not active_stops_df.empty:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    with st.expander("📊 View Map Stops and Segments as an Accessible Table", expanded=False):
+                        st.caption("This collapsible data table acts as an accessible, high-contrast text alternative to the visual map representation.")
+                        clean_display_stops = active_stops_df[active_stops_df['stop_lat'].notna()].copy()
+                        if 'stop_name' in clean_display_stops.columns:
+                            clean_display_stops['stop_name'] = clean_display_stops['stop_name'].astype(str)
 
-                    st.markdown("##### Route Stops")
-                    stop_cols_to_show = [col for col in ['stop_name', 'reliability', 'sample_size'] if col in clean_display_stops.columns]
-                    st.dataframe(
-                        clean_display_stops[stop_cols_to_show],
-                        column_config={
-                            'stop_name': st.column_config.TextColumn("Stop Station Name"),
-                            'reliability': st.column_config.NumberColumn("On-Time Reliability Rate", format="%.1f%%"),
-                            'sample_size': st.column_config.NumberColumn("Measured Runs", format="%d")
-                        },
-                        use_container_width=True, hide_index=True
-                    )
-
-                    if active_segments_df is not None and not active_segments_df.empty:
-                        st.markdown("##### Corridor Segments")
-                        display_segs = pd.DataFrame(active_segments_df).drop(columns=['geometry'], errors='ignore')
-                        seg_cols_to_show = [col for col in ['segment', 'avg_reliability', 'sample_size'] if col in display_segs.columns]
+                        st.markdown("##### Route Stops")
+                        stop_cols_to_show = [col for col in ['stop_name', 'reliability', 'sample_size'] if col in clean_display_stops.columns]
                         st.dataframe(
-                            display_segs[seg_cols_to_show],
+                            clean_display_stops[stop_cols_to_show],
                             column_config={
-                                'segment': st.column_config.TextColumn("Inter-Stop Route Segment"),
-                                'avg_reliability': st.column_config.NumberColumn("Average Corridor Segment Reliability", format="%.1f%%"),
-                                'sample_size': st.column_config.NumberColumn("Aggregate Runs Measured", format="%d")
+                                'stop_name': st.column_config.TextColumn("Stop Station Name"),
+                                'reliability': st.column_config.NumberColumn("On-Time Reliability Rate", format="%.1f%%"),
+                                'sample_size': st.column_config.NumberColumn("Measured Runs", format="%d")
                             },
                             use_container_width=True, hide_index=True
                         )
+
+                        if active_segments_df is not None and not active_segments_df.empty:
+                            st.markdown("##### Corridor Segments")
+                            display_segs = pd.DataFrame(active_segments_df).drop(columns=['geometry'], errors='ignore')
+                            seg_cols_to_show = [col for col in ['segment', 'avg_reliability', 'sample_size'] if col in display_segs.columns]
+                            st.dataframe(
+                                display_segs[seg_cols_to_show],
+                                column_config={
+                                    'segment': st.column_config.TextColumn("Inter-Stop Route Segment"),
+                                    'avg_reliability': st.column_config.NumberColumn("Average Corridor Segment Reliability", format="%.1f%%"),
+                                    'sample_size': st.column_config.NumberColumn("Aggregate Runs Measured", format="%d")
+                                },
+                                use_container_width=True, hide_index=True
+                            )
 
         # =========================================================
         # VIEW 2: EQUITY CONTEXT MAP
         # =========================================================
         else:
-            st.markdown("### 🏘️ Equity Context Map")
-            st.markdown("Neighbourhood-level equity indicators from Statistics Canada 2021 Census, overlaid with transit reliability. **Use the layer panel (top-left of the map) to toggle between equity indicators.**")
-            
-            with st.expander("📖 Layer Guide", expanded=False):
-                st.markdown("""
-    | Layer Name | What It Shows |
-    |---|---|
-    | Median Household Income ($) | Neighbourhood median household income |
-    | Low-Income Households (%) | Share of residents below low-income measure |
-    | Transit Commuters (%) | Share of employed residents commuting by transit |
-    | Visible Minority Population (%) | Share identifying as visible minority |
-    | Recent Immigrants (%) | Share who immigrated within 5 years |
-    | Seniors 65+ (%) | Share of population aged 65 or older |
-    """)
-            
-            equity_gdf = load_equity_data()
-            
-            # SIMPLIFICATION APPLIED HERE to stop OOM crashes
-            display_equity = equity_gdf.copy()
-            if not display_equity.empty and 'geometry' in display_equity.columns:
-                display_equity['geometry'] = display_equity['geometry'].simplify(0.0005, preserve_topology=True)
-            
-            t_stops = None
-            t_segs = None
-            
-            if st.session_state.analysis_results is not None:
-                t_stops = st.session_state.analysis_results.get('stops_df')
-                t_segs = st.session_state.analysis_results.get('segments_df')
-            else:
-                precomputed = load_precomputed_network()
-                if precomputed:
-                    t_stops = pd.DataFrame(precomputed['stops'])
-                    t_segs = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
-                    t_stops, t_segs = inject_legend_anchors(t_stops, t_segs)
-                    
-            equity_config = generate_equity_kepler_config()
-            data_dict = {"equity": display_equity}
-            
-            if t_stops is not None and t_segs is not None and not t_stops.empty and not t_segs.empty:
-                data_dict["stops"] = t_stops
-                data_dict["segments"] = t_segs
-            else:
-                layers = equity_config["config"]["visState"]["layers"]
-                equity_config["config"]["visState"]["layers"] = [l for l in layers if l["id"] not in ("segments", "stops")]
-                layer_order = equity_config["config"]["visState"]["layerOrder"]
-                equity_config["config"]["visState"]["layerOrder"] = [lo for lo in layer_order if lo not in ("segments", "stops")]
-                tooltip_fields = equity_config["config"]["visState"]["interactionConfig"]["tooltip"]["fieldsToShow"]
-                if "segments" in tooltip_fields: del tooltip_fields["segments"]
-                if "stops" in tooltip_fields: del tooltip_fields["stops"]
-                    
-            equity_map = KeplerGl(height=650, data=data_dict, config=equity_config)
-            keplergl_static(equity_map, center_map=True)
+            # ✅ Unique container key forces React to completely destroy this block when switching away
+            with st.container(key="equity_map_block"):
+                st.markdown("### 🏘️ Equity Context Map")
+                st.markdown("Neighbourhood-level equity indicators from Statistics Canada 2021 Census, overlaid with transit reliability. **Use the layer panel (top-left of the map) to toggle between equity indicators.**")
+                
+                with st.expander("📖 Layer Guide", expanded=False):
+                    st.markdown("""
+        | Layer Name | What It Shows |
+        |---|---|
+        | Median Household Income ($) | Neighbourhood median household income |
+        | Low-Income Households (%) | Share of residents below low-income measure |
+        | Transit Commuters (%) | Share of employed residents commuting by transit |
+        | Visible Minority Population (%) | Share identifying as visible minority |
+        | Recent Immigrants (%) | Share who immigrated within 5 years |
+        | Seniors 65+ (%) | Share of population aged 65 or older |
+        """)
+                
+                equity_gdf = load_equity_data()
+                
+                # Simplification to prevent OOM
+                display_equity = equity_gdf.copy()
+                if not display_equity.empty and 'geometry' in display_equity.columns:
+                    display_equity['geometry'] = display_equity['geometry'].simplify(0.0005, preserve_topology=True)
+                
+                t_stops = None
+                t_segs = None
+                
+                if st.session_state.analysis_results is not None:
+                    t_stops = st.session_state.analysis_results.get('stops_df')
+                    t_segs = st.session_state.analysis_results.get('segments_df')
+                else:
+                    precomputed = load_precomputed_network()
+                    if precomputed:
+                        t_stops = pd.DataFrame(precomputed['stops'])
+                        t_segs = gpd.GeoDataFrame.from_features(precomputed['segments']['features'])
+                        t_stops, t_segs = inject_legend_anchors(t_stops, t_segs)
+                        
+                equity_config = generate_equity_kepler_config()
+                data_dict = {"equity": display_equity}
+                
+                if t_stops is not None and t_segs is not None and not t_stops.empty and not t_segs.empty:
+                    data_dict["stops"] = t_stops
+                    data_dict["segments"] = t_segs
+                else:
+                    layers = equity_config["config"]["visState"]["layers"]
+                    equity_config["config"]["visState"]["layers"] = [l for l in layers if l["id"] not in ("segments", "stops")]
+                    layer_order = equity_config["config"]["visState"]["layerOrder"]
+                    equity_config["config"]["visState"]["layerOrder"] = [lo for lo in layer_order if lo not in ("segments", "stops")]
+                    tooltip_fields = equity_config["config"]["visState"]["interactionConfig"]["tooltip"]["fieldsToShow"]
+                    if "segments" in tooltip_fields: del tooltip_fields["segments"]
+                    if "stops" in tooltip_fields: del tooltip_fields["stops"]
+                        
+                equity_map = KeplerGl(id="equity_map_view", height=650, data=data_dict, config=equity_config)
+                keplergl_static(equity_map, center_map=True)
 
-            # Accessible Fallback for Equity Data
-            if equity_gdf is not None and not equity_gdf.empty:
-                st.markdown("<br>", unsafe_allow_html=True)
-                with st.expander("🏘️ View Neighbourhood Census Equity Metrics as an Accessible Table", expanded=False):
-                    display_eq_table = pd.DataFrame(equity_gdf).drop(columns=['geometry'], errors='ignore').sort_values('area_name')
-                    st.dataframe(
-                        display_eq_table[[
-                            'area_name', 'median_income', 'low_income_pct', 
-                            'transit_commute_pct', 'visible_minority_pct', 
-                            'recent_immigrant_pct', 'senior_pct'
-                        ]],
-                        column_config={
-                            'area_name': st.column_config.TextColumn("Neighbourhood Name"),
-                            'median_income': st.column_config.NumberColumn("Median Household Income", format="$%d"),
-                            'low_income_pct': st.column_config.NumberColumn("Low-Income Households", format="%.1f%%"),
-                            'transit_commute_pct': st.column_config.NumberColumn("Transit Commute share", format="%.1f%%"),
-                            'visible_minority_pct': st.column_config.NumberColumn("Visible Minority Share", format="%.1f%%"),
-                            'recent_immigrant_pct': st.column_config.NumberColumn("Recent Immigrants", format="%.1f%%"),
-                            'senior_pct': st.column_config.NumberColumn("Seniors 65+", format="%.1f%%")
-                        },
-                        use_container_width=True, hide_index=True
-                    )
+                # Accessible Fallback for Equity Data
+                if equity_gdf is not None and not equity_gdf.empty:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    with st.expander("🏘️ View Neighbourhood Census Equity Metrics as an Accessible Table", expanded=False):
+                        display_eq_table = pd.DataFrame(equity_gdf).drop(columns=['geometry'], errors='ignore').sort_values('area_name')
+                        st.dataframe(
+                            display_eq_table[[
+                                'area_name', 'median_income', 'low_income_pct', 
+                                'transit_commute_pct', 'visible_minority_pct', 
+                                'recent_immigrant_pct', 'senior_pct'
+                            ]],
+                            column_config={
+                                'area_name': st.column_config.TextColumn("Neighbourhood Name"),
+                                'median_income': st.column_config.NumberColumn("Median Household Income", format="$%d"),
+                                'low_income_pct': st.column_config.NumberColumn("Low-Income Households", format="%.1f%%"),
+                                'transit_commute_pct': st.column_config.NumberColumn("Transit Commute share", format="%.1f%%"),
+                                'visible_minority_pct': st.column_config.NumberColumn("Visible Minority Share", format="%.1f%%"),
+                                'recent_immigrant_pct': st.column_config.NumberColumn("Recent Immigrants", format="%.1f%%"),
+                                'senior_pct': st.column_config.NumberColumn("Seniors 65+", format="%.1f%%")
+                            },
+                            use_container_width=True, hide_index=True
+                        )
 
         st.markdown("---")
         st.markdown("### 🏘️ Equity Context Map")
