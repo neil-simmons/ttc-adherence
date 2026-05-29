@@ -5,6 +5,7 @@ import geopandas as gpd
 from shapely.geometry import LineString, Point
 from shapely.ops import substring, linemerge
 import plotly.graph_objects as go
+import plotly.io as pio
 import gc
 import threading
 import json
@@ -1124,7 +1125,14 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
     fig_A.update_layout(**common_layout, title=f"{t_str} — Density", violinmode='overlay', boxmode='overlay')
     fig_B.update_layout(**common_layout, title=f"{t_str} — Time-Distance", hovermode='closest')
 
-    st.session_state.analysis_results = {'is_multi': False, 'fig_A': fig_A, 'fig_B': fig_B, 'stops_df': stops_df, 'segments_df': segments_df, 'kepler_config': generate_kepler_config()}
+    st.session_state.analysis_results = {
+        'is_multi': False, 
+        'fig_A_json': fig_A.to_json(), 
+        'fig_B_json': fig_B.to_json(), 
+        'stops_df': stops_df, 
+        'segments_df': segments_df, 
+        'kepler_config': generate_kepler_config()
+    }
     announce_sr(f"Analysis completed successfully for Route {selected_route}. Visual charts and geographic maps are updated.")
     
     raw_data['trip_stats'] = compute_trip_stats(raw_data)
@@ -1456,7 +1464,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                 ]
                 st.session_state.saved_ui_state = {k: st.session_state[k] for k in keys_to_save if k in st.session_state}
                 st.session_state.show_settings = False
-                st.rerun()
+                # st.rerun() removed to avoid fragment lifecycle race conditions
 
 def render_insights_panel(raw_pipeline_data, analysis_results):
     is_multi = analysis_results.get('is_multi', False)
@@ -1970,7 +1978,7 @@ if not st.session_state.show_settings:
         if 'saved_ui_state' in st.session_state:
             for k, v in st.session_state.saved_ui_state.items():
                 st.session_state[k] = v
-        st.rerun()
+        # st.rerun() removed to let Streamlit's reactive re-rendering handle it
         
 if st.session_state.show_settings:
     with st.container():
@@ -2142,8 +2150,18 @@ with tab_map:
             if "stops" in tooltip_fields:
                 del tooltip_fields["stops"]
                 
-        equity_map = KeplerGl(height=650, data=data_dict, config=equity_config)
-        keplergl_static(equity_map, center_map=True)
+        # Gate the heavy WebGL render behind a user action
+        if 'show_equity_map' not in st.session_state:
+            st.session_state.show_equity_map = False
+            
+        if not st.session_state.show_equity_map:
+            if st.button("🏘️ Load Interactive Equity Context Map"):
+                st.session_state.show_equity_map = True
+                st.rerun() # Local rerun to reveal map
+                
+        if st.session_state.show_equity_map:
+            equity_map = KeplerGl(height=650, data=data_dict, config=equity_config)
+            keplergl_static(equity_map, center_map=True)
 
         # -------------------------------------------------------------------------
         # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR CENSUS NEIGHBOURHOOD EQUITY DATA
@@ -2201,13 +2219,17 @@ with tab_charts:
                 
                 gmaps_link_container = st.empty()
                 
+                # Deserialize from JSON
+                fig_B = pio.from_json(st.session_state.analysis_results['fig_B_json'])
+                
                 event = st.plotly_chart(
-                    st.session_state.analysis_results['fig_B'],
+                    fig_B,
                     use_container_width=True,
                     height=900,
                     config=PLOTLY_CONFIG,
                     on_select="rerun",
-                    selection_mode=["points"]
+                    selection_mode=["points"],
+                    key="fig_b_chart"  # Stable key prevents session drift on clicks
                 )
                 
                 if event and event.selection.get("points"):
@@ -2275,7 +2297,11 @@ with tab_charts:
                 st.warning("⚠️ **Charts Disabled.** Detailed density plots are only available when analyzing a single route.")
             else:
                 st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
-                st.plotly_chart(st.session_state.analysis_results['fig_A'], use_container_width=True, height=900, config=PLOTLY_CONFIG)
+                
+                # Deserialize from JSON
+                fig_A = pio.from_json(st.session_state.analysis_results['fig_A_json'])
+                
+                st.plotly_chart(fig_A, use_container_width=True, height=900, config=PLOTLY_CONFIG, key="fig_a_chart")
 
         with tab_analytics:
             has_analysis = st.session_state.analysis_results is not None
