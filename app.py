@@ -2148,7 +2148,9 @@ with tab_map:
                 if "stops" in tooltip_fields:
                     del tooltip_fields["stops"]
                     
-            equity_map = KeplerGl(id="equity_map_view", height=650, data=data_dict, config=equity_config)
+            # Create a dynamic ID so React completely resets the component on data change
+            dynamic_eq_id = "equity_map_custom" if st.session_state.analysis_results else "equity_map_default"
+            equity_map = KeplerGl(id=dynamic_eq_id, height=650, data=data_dict, config=equity_config)
             keplergl_static(equity_map, center_map=True)
 
             # -------------------------------------------------------------------------
