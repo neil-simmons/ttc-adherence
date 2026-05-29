@@ -1997,7 +1997,6 @@ tab_map, tab_charts, tab_recal = st.tabs([
 ])
 
 with tab_map:
-    @st.fragment
     def render_map_tab():
         # Additive Map-Specific Accessibility Toggle
         st.selectbox(
@@ -2117,6 +2116,11 @@ with tab_map:
         
         equity_gdf = load_equity_data()
         
+        # ✅ NEW: Simplify the hidden census boundaries before rendering to prevent memory crashes
+        display_equity = equity_gdf.copy()
+        if not display_equity.empty and 'geometry' in display_equity.columns:
+            display_equity['geometry'] = display_equity['geometry'].simplify(0.0005, preserve_topology=True)
+        
         t_stops = None
         t_segs = None
         
@@ -2132,7 +2136,9 @@ with tab_map:
                 t_stops, t_segs = inject_legend_anchors(t_stops, t_segs)
                 
         equity_config = generate_equity_kepler_config()
-        data_dict = {"equity": equity_gdf}
+        
+        # ✅ CHANGED: Use the simplified 'display_equity' instead of the raw 'equity_gdf'
+        data_dict = {"equity": display_equity}
         
         if t_stops is not None and t_segs is not None and not t_stops.empty and not t_segs.empty:
             data_dict["stops"] = t_stops
@@ -2190,7 +2196,6 @@ with tab_map:
     render_map_tab()
 
 with tab_charts:
-    @st.fragment
     def render_charts_tab():
         # Split the consolidated tab back up into the normal 3 separate views
         tab_spaghetti, tab_stats, tab_analytics = st.tabs([
