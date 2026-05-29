@@ -1997,6 +1997,7 @@ tab_map, tab_charts, tab_recal = st.tabs([
 ])
 
 with tab_map:
+    @st.fragment
     def render_map_tab():
         col1, col2 = st.columns([1, 1])
         with col1:
