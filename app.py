@@ -1464,7 +1464,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
                 ]
                 st.session_state.saved_ui_state = {k: st.session_state[k] for k in keys_to_save if k in st.session_state}
                 st.session_state.show_settings = False
-                # st.rerun() removed to avoid fragment lifecycle race conditions
+                st.rerun()  # <--- PUT THIS BACK
 
 def render_insights_panel(raw_pipeline_data, analysis_results):
     is_multi = analysis_results.get('is_multi', False)
@@ -1978,7 +1978,7 @@ if not st.session_state.show_settings:
         if 'saved_ui_state' in st.session_state:
             for k, v in st.session_state.saved_ui_state.items():
                 st.session_state[k] = v
-        # st.rerun() removed to let Streamlit's reactive re-rendering handle it
+        st.rerun()  # <--- PUT THIS BACK
         
 if st.session_state.show_settings:
     with st.container():
