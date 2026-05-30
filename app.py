@@ -1104,9 +1104,9 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
             x=line_data['x'], 
             y=line_data['y'], 
             mode='lines+markers', 
-            line=dict(width=1.2), # Increased line width from 0.3 for legibility in screenshots
-            marker=dict(size=3.0), # Increased marker size from 1.5 for visibility
-            opacity=1.0, 
+            line=dict(width=0.3), 
+            marker=dict(size=1.5), 
+            opacity=1.0,
             connectgaps=False, 
             name=line_data['name'], 
             customdata=cd,
@@ -1119,8 +1119,8 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         x=raw_data['st_filtered']['relative_sec'] / 60.0, 
         y=raw_data['st_filtered']['shape_dist_traveled'], 
         mode='lines+markers', 
-        line=dict(color='#000000', width=3.5), # Bolded scheduled baseline from 1.4 for report contrast
-        marker=dict(symbol='circle', size=9.0, color='#000000'), # Increased marker size from 4.5
+        line=dict(color='#000000', width=1.4), 
+        marker=dict(symbol='circle', size=4.5, color='#000000'), 
         name="Scheduled Baseline",
         customdata=sched_sample_sizes,
         hovertemplate="<b>Scheduled Baseline</b><br>Distance: %{y:.2f} km<br>Rel Time: %{x:.1f} mins<br>Sample Size: %{customdata} runs<extra></extra>"
