@@ -1506,9 +1506,9 @@ def render_insights_panel(raw_pipeline_data, analysis_results):
     best_stop_name = best_row['stop_name']
     best_short = best_stop_name[:27] + "..." if len(best_stop_name) > 30 else best_stop_name
 
-    # Insight 5 - Biggest Reliability Cliff (Disabled for multi-route due to intersecting geometries)
+    # Insight 5 - Biggest Reliability Cliff (Disabled for multi-route due to multiple geometries)
     if is_multi:
-        cliff_text = "Stop-to-stop reliability cliff calculation is disabled in network mode due to intersecting route geometries."
+        cliff_text = "Stop-to-stop reliability cliff calculation is disabled in network mode due to multiple route geometries."
     else:
         rs_df = real_stops.copy()
         rs_df['stop_id_str'] = rs_df['stop_id'].astype(str)
