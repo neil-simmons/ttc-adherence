@@ -1,25 +1,3 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import geopandas as gpd
-from shapely.geometry import LineString, Point
-from shapely.ops import substring, linemerge
-import plotly.graph_objects as go
-import plotly.io as pio
-import gc
-import threading
-import json
-import datetime
-import re
-from huggingface_hub import hf_hub_download
-from streamlit_keplergl import keplergl_static
-from keplergl import KeplerGl
-import pyarrow.parquet as pq
-import pyarrow.compute as pc
-import pyarrow as pa
-import pyarrow.dataset as ds
-import warnings
-
 # ==============================================================================
 # 0. CONFIGURATION & CONSTANTS
 # ==============================================================================
@@ -1100,8 +1078,8 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
             x=line_data['x'], 
             y=line_data['y'], 
             mode='lines+markers', 
-            line=dict(width=0.3), # Increased line width from 0.3 for legibility in screenshots
-            marker=dict(size=1.5), # Increased marker size from 1.5 for visibility
+            line=dict(width=1.2), # Increased line width from 0.3 for legibility in screenshots
+            marker=dict(size=3.0), # Increased marker size from 1.5 for visibility
             opacity=1.0, 
             connectgaps=False, 
             name=line_data['name'], 
@@ -1116,7 +1094,7 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         y=raw_data['st_filtered']['shape_dist_traveled'], 
         mode='lines+markers', 
         line=dict(color='#000000', width=3.5), # Bolded scheduled baseline from 1.4 for report contrast
-        marker=dict(symbol='circle', size=4.5, color='#000000'), # Increased marker size from 4.5
+        marker=dict(symbol='circle', size=9.0, color='#000000'), # Increased marker size from 4.5
         name="Scheduled Baseline",
         customdata=sched_sample_sizes,
         hovertemplate="<b>Scheduled Baseline</b><br>Distance: %{y:.2f} km<br>Rel Time: %{x:.1f} mins<br>Sample Size: %{customdata} runs<extra></extra>"
@@ -1749,7 +1727,13 @@ def build_stop_time_heatmap(trip_stats):
     fig = go.Figure(data=go.Heatmap(
         z=matrix, x=stop_labels, y=bucket_labels,
         colorscale='RdBu_r', zmid=0,
-        colorbar=dict(title="<b>Deviation (min)</b>", ticksuffix=" min", titlefont=dict(size=14, family="Arial, sans-serif")),
+        colorbar=dict(
+            title=dict(
+                text="<b>Deviation (min)</b>",
+                font=dict(size=14, family="Arial, sans-serif", color="#000000")
+            ),
+            ticksuffix=" min"
+        ),
         hovertemplate="Stop: %{x}<br>Period: %{y}<br>Median Deviation: %{z:.1f} min<extra></extra>"
     ))
     fig.update_layout(
@@ -1804,7 +1788,13 @@ def build_stop_dow_heatmap(trip_stats):
     fig = go.Figure(data=go.Heatmap(
         z=matrix, x=stop_labels, y=row_labels,
         colorscale='RdBu_r', zmid=0,
-        colorbar=dict(title="<b>Deviation (min)</b>", ticksuffix=" min", titlefont=dict(size=14, family="Arial, sans-serif")),
+        colorbar=dict(
+            title=dict(
+                text="<b>Deviation (min)</b>",
+                font=dict(size=14, family="Arial, sans-serif", color="#000000")
+            ),
+            ticksuffix=" min"
+        ),
         hovertemplate="Stop: %{x}<br>Day: %{y}<br>Median Deviation: %{z:.1f} min<extra></extra>"
     ))
     fig.update_layout(
@@ -2193,7 +2183,7 @@ with tab_map:
             
             equity_gdf = load_equity_data()
             
-            # Simplified the hidden census boundaries before rendering to prevent memory crashes
+            # Simplify the hidden census boundaries before rendering to prevent memory crashes
             display_equity = equity_gdf.copy()
             if not display_equity.empty and 'geometry' in display_equity.columns:
                 display_equity['geometry'] = display_equity['geometry'].simplify(0.0005, preserve_topology=True)
@@ -2239,7 +2229,7 @@ with tab_map:
             keplergl_static(equity_map, center_map=True)
 
             # -------------------------------------------------------------------------
-            # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR CENSUS NEIGHBOURHOOD EQUITY DATA
+            # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR CENSUS NEBOURHOOD EQUITY DATA
             # -------------------------------------------------------------------------
             if equity_gdf is not None and not equity_gdf.empty:
                 st.markdown("<br>", unsafe_allow_html=True)
@@ -2509,9 +2499,7 @@ with tab_charts:
                                 st.dataframe(pd.DataFrame(data), hide_index=True)
                         else:
                             st.info(
-                                "**Day-of-week chart unavailable.** This chart requires data from "
-                                "at least 3 distinct days of the week. Your current analysis "
-                                "covers fewer — expand the day filters in the settings panel."
+                                "col_name_chart_not_found"
                             )
 
                         st.markdown("---")
