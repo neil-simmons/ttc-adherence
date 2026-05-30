@@ -1322,7 +1322,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
     with col_a:
         st.subheader("1. Route Selection")
         adv_mode = st.toggle("Advanced: Route-Level Analysis", key="adv_mode", on_change=reset_signatures)
-        
+        #Advanced: Route-Level Analysis used to be called Multi-Level Analysis
         if adv_mode:
             all_options = get_all_route_directions(trips, available_routes)
             if "multi_routes" not in st.session_state: st.session_state.multi_routes = all_options[:2]
@@ -2255,7 +2255,7 @@ with tab_map:
             keplergl_static(equity_map, center_map=True)
 
             # -------------------------------------------------------------------------
-            # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR CENSUS NEBOURHOOD EQUITY DATA
+            # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR CENSUS NEIGHBOURHOOD  EQUITY DATA
             # -------------------------------------------------------------------------
             if equity_gdf is not None and not equity_gdf.empty:
                 st.markdown("<br>", unsafe_allow_html=True)
@@ -2525,7 +2525,9 @@ with tab_charts:
                                 st.dataframe(pd.DataFrame(data), hide_index=True)
                         else:
                             st.info(
-                                "col_name_chart_not_found"
+                                "**Day-of-week chart unavailable.** This chart requires data from "
+                                "at least 3 distinct days of the week. Your current analysis "
+                                "covers fewer — expand the day filters in the settings panel."
                             )
 
                         st.markdown("---")
