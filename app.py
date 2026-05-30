@@ -1,4 +1,30 @@
 # ==============================================================================
+# TTC-ScheduleWatch App with High-Contrast Report Screenshot Layout Modifiers
+# ==============================================================================
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import geopandas as gpd
+from shapely.geometry import LineString, Point
+from shapely.ops import substring, linemerge
+import plotly.graph_objects as go
+import plotly.io as pio
+import gc
+import threading
+import json
+import datetime
+import re
+from huggingface_hub import hf_hub_download
+from streamlit_keplergl import keplergl_static
+from keplergl import KeplerGl
+import pyarrow.parquet as pq
+import pyarrow.compute as pc
+import pyarrow as pa
+import pyarrow.dataset as ds
+import warnings
+
+# ==============================================================================
 # 0. CONFIGURATION & CONSTANTS
 # ==============================================================================
 st.set_page_config(
