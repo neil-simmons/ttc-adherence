@@ -1134,7 +1134,7 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
         yaxis_title="<b>Official Track Distance (km) & Stops [On-Time Reliability %]</b>",
         xaxis_title="<b>Relative Time (Minutes)</b>",
         template="plotly_white", 
-        margin=dict(r=260, t=70, b=50)
+        margin=dict(r=260, t=70, b=50),
         xaxis=dict(
             automargin=True,
             tickfont=dict(size=14, color="#000000") # Forced dark and readable tick markers
