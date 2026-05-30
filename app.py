@@ -640,7 +640,6 @@ def run_tracking(df_hist_raw, matching_trip_ids, s2_vars, stop_times, stops, gtf
         # To eliminate GPS coordinates jitter/creep without dropping timestamps, 
         # we apply a rolling median filter (window of 3) to smooth the distances,
         # followed by cummax() to prevent backward GPS drift.
-        # This preserves 100% of the dwell-time timestamps and keeps the math & visuals coupled.
         group['official_dist_km'] = (
             group['official_dist_km']
             .rolling(window=3, min_periods=1, center=True)
@@ -983,9 +982,6 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
     )
     stops_df, segments_df = inject_legend_anchors(stops_df, segments_df)
     
-    # -------------------------------------------------------------
-    # SMART Y-TICK TRUNCATION & DENSITY CHART GENERATION
-    # -------------------------------------------------------------
     
     # Calculate zero-overlap limits dynamically based on corridor stop spacing
     dists = raw_data['st_filtered']['shape_dist_traveled'].values
@@ -1196,7 +1192,7 @@ def execute_multi_route_pipeline(selected_combos, parquet_path, trips, stop_time
             'sample_size': 'sum'
         })
         
-        # Compute the statistically rigorous weighted Micro-Average across pooled transit runs
+        # Compute weighted Micro-Average across pooled transit runs
         master_stops['reliability'] = np.where(master_stops['sample_size'] > 0, master_stops['rel_weighted'] / master_stops['sample_size'], 0)
         master_stops.drop(columns=['rel_weighted'], inplace=True)
 
@@ -1506,7 +1502,7 @@ def render_insights_panel(raw_pipeline_data, analysis_results):
     best_stop_name = best_row['stop_name']
     best_short = best_stop_name[:27] + "..." if len(best_stop_name) > 30 else best_stop_name
 
-    # Insight 5 - Biggest Reliability Cliff (Disabled for multi-route due to multiple geometries)
+    # Insight 5 - Biggest Reliability Cliff (Disabled for route-level analysis due to multiple geometries)
     if is_multi:
         cliff_text = "Stop-to-stop reliability cliff calculation is disabled in network mode due to multiple route geometries."
     else:
@@ -1805,7 +1801,6 @@ def build_equity_scatter(stops_df, equity_gdf, equity_field, metric_label):
         color = WCAG_ROUTE_COLORS[i % len(WCAG_ROUTE_COLORS)]
         route_data = joined[joined['route_id'].astype(str) == route]
         
-        # Format legend nicely (avoiding "Route Streetcar Network" redundancy)
         legend_name = route if "Network" in str(route) else f"Route {route}"
         
         fig.add_trace(go.Scatter(
@@ -1907,18 +1902,16 @@ def render_recalibration_section(tab_id):
 
     st.markdown("""
 Suggests adjusted stop arrival times based on observed historical performance.
-The **target percentile** controls how conservative the new schedule is:
-- **50th (median):** Minimises added journey time. Half of trips will still be over 0 seconds late.
-- **75th:** ~75% of trips appear on-time or early. Moderate buffer.
-- **85th:** ~85% of trips appear on-time or early.
-- **95th:** Near-universal on-time appearance at the cost of longer scheduled journey times.
+The **target percentile** controls how the new schedule is optimized
+- **50th (median):** Aligns new schedule to observed medians.
+- **Example: 85th:** ~85% of trips appear less than or equal to 0 seconds late.
 """)
 
     target_pct = st.slider(
         "Target Percentile",
-        min_value=50, max_value=95, value=50, step=5,
+        min_value=05, max_value=95, value=50, step=5,
         key=f"recal_percentile_slider_{tab_id}",
-        help="Higher = more trips appear on-time, but scheduled journey times increase."
+        help="Higher = more trips appear less than or equal to 0 seconds late, but scheduled journey times increase."
     )
 
     recal_df = compute_recalibration(
@@ -2653,27 +2646,23 @@ with tab_recal:
 
             st.warning(
                 "⚠️ **Schedule recalibration produces the most meaningful results "
-                "when applied to a homogeneous group of trips**. This is ideally a single "
-                "headsign operating within a consistent, narrow time window (e.g., "
-                "AM peak only). Applying recalibration to a broad multi-hour dataset "
-                "will produce adjustments that average across very different operating "
-                "conditions and may be suboptimal for any specific time period. Use "
+                "when applied to a homogeneous group of trips**. Applying recalibration to a broad datasets "
+                "may produce adjustments that average across very different operating "
+                "conditions and may be suboptimal for any specific time period. Use the analytics tab to identify homogeneous groups and "
                 "the time and day filters to narrow your analysis before downloading."
             )
 
             st.markdown("""
-        The **target percentile** controls how conservative the adjusted schedule is:
-        - **50th (median):** Minimises added journey time. Half of trips will still appear late relative to the new schedule.
-        - **75th:** Approximately 75% of trips appear on-time or early. Moderate buffer.
-        - **85th:** Industry-standard target. Approximately 85% of trips appear on-time or early.
-        - **95th:** Highly conservative. Near-universal on-time performance at the cost of significantly longer scheduled journey times.
+        The **target percentile** controls how the new schedule is optimized
+        - **50th (median):** Aligns new schedule to observed medians.
+        - **Example: 85th:** ~85% of trips appear less than or equal to 0 seconds late.
         """)
 
             target_pct = st.slider(
                 "Target Percentile",
-                min_value=50, max_value=95, value=85, step=5,
+                min_value=05, max_value=95, value=50, step=5,
                 key="recal_percentile_slider_tab",
-                help="Higher = more trips appear on-time, but official journey times increase."
+                help="Higher = more trips appear less than or equal to 0 seconds late, but official journey times increase."
             )
 
             recal_df = compute_recalibration(
