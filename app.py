@@ -1956,7 +1956,8 @@ The **target percentile** controls how the new schedule is optimized
 # 7. MAIN UI & TAB LAYOUT
 # ==============================================================================
 st.title("TTC ScheduleWatch")
-st.caption("Open-data analysis tool of TTC streetcar performance versus published schedules (GTFS). Visualizes streetcar locations between March 15 - May 2 2026. This website is not affiliated with the TTC. ")
+st.caption("Open-data analysis tool of TTC streetcar performance versus published schedules (GTFS). Visualizes streetcar trips between March 15 - May 2 2026. This website is not affiliated with the TTC. ")
+st.caption("All results are **estimates**. This tool can help identify where, when and the nature of schedule deviation and delay present in streetcar routes, suggesting optimized schedules. ")
 
 parquet_path = get_parquet_path()
 available_routes = get_available_routes(parquet_path)
