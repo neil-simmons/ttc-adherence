@@ -1909,7 +1909,7 @@ The **target percentile** controls how the new schedule is optimized
 
     target_pct = st.slider(
         "Target Percentile",
-        min_value=05, max_value=95, value=50, step=5,
+        min_value=5, max_value=95, value=50, step=5,
         key=f"recal_percentile_slider_{tab_id}",
         help="Higher = more trips appear less than or equal to 0 seconds late, but scheduled journey times increase."
     )
@@ -2660,7 +2660,7 @@ with tab_recal:
 
             target_pct = st.slider(
                 "Target Percentile",
-                min_value=05, max_value=95, value=50, step=5,
+                min_value=5, max_value=95, value=50, step=5,
                 key="recal_percentile_slider_tab",
                 help="Higher = more trips appear less than or equal to 0 seconds late, but official journey times increase."
             )
