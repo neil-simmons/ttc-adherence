@@ -2724,4 +2724,4 @@ with tab_recal:
     render_recal_tab()
 
 st.markdown("---")
-st.caption("**Data Privacy Statement:** All data is open public data sourced from the City of Toronto Open Data Portal. © 2026 Neil Simmons. All rights reserved.")
+st.caption("**Data Privacy Statement:** All data is open public data sourced from the City of Toronto Open Data Portal. © 2026 Neil Simmons (linkedin.com/in/n-simmons). All rights reserved.")
