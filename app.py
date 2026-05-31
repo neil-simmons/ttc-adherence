@@ -1,7 +1,3 @@
-# ==============================================================================
-# TTC-ScheduleWatch App with High-Contrast Report Screenshot Layout Modifiers
-# ==============================================================================
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -35,7 +31,6 @@ st.set_page_config(
 )
 
 # MOBILE WARNING CSS INJECTION & ACCESSIBILITY SCREEN-READER CLASSES
-# Expanded with strict high-contrast font rules targeting report screenshots of tables
 st.markdown("""
 <style>
 .mobile-warning { display: none; background-color: #ffcccc; color: #900; padding: 12px; border-left: 6px solid #DA251D; margin-bottom: 15px; font-size: 14px; border-radius: 4px; }
@@ -50,33 +45,6 @@ st.markdown("""
     overflow: hidden;
     clip: rect(0, 0, 0, 0);
     border: 0;
-}
-
-/* HIGH-CONTRAST SCREENSHOT OVERRIDES FOR TABLES AND DATAFRAMES */
-[data-testid="stDataFrame"] *, table, tr, td, th {
-    font-family: 'Arial', sans-serif !important;
-    color: #000000 !important;
-}
-[data-testid="stDataFrame"] {
-    border: 2px solid #000000 !important;
-}
-table {
-    border-collapse: collapse !important;
-    width: 100% !important;
-    font-size: 15px !important;
-    background-color: #ffffff !important;
-}
-th {
-    font-size: 16px !important;
-    font-weight: bold !important;
-    background-color: #f0f2f6 !important;
-    border-bottom: 3px solid #000000 !important;
-    padding: 8px !important;
-}
-td {
-    border-bottom: 1px solid #cccccc !important;
-    padding: 6px !important;
-    font-weight: 500 !important;
 }
 </style>
 <div class="mobile-warning" role="alert" aria-live="polite">⚠️ <b>Mobile Device Detected:</b> This dashboard includes extremely dense data visualizations. Please open on a desktop computer for the best experience with the Time-Distance and Density charts.</div>
@@ -1060,7 +1028,6 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
             spanmode='hard', # 'hard' strictly bounds the curve to the min and max data points (no overhang)
             width=violin_plotly_width, # Applies Global Ceiling zero-overlap logic
             line_color=c_base, fillcolor=c_fill, showlegend=False, points=False, box_visible=False,
-            line=dict(width=1.5), # Standardized bolder lines for report print-outs
             hovertemplate=density_hover_template
         ))
         fig_A.add_trace(go.Box(
@@ -1069,7 +1036,6 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
             name=clean_name, 
             orientation='h', width=(global_min_gap * 0.15),
             line_color=c_base, fillcolor=c_box, boxpoints='outliers', showlegend=False,
-            line=dict(width=1.5), # Standardized bolder lines for report print-outs
             hovertemplate=density_hover_template
         ))
 
@@ -1106,7 +1072,7 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
             mode='lines+markers', 
             line=dict(width=0.3), 
             marker=dict(size=1.5), 
-            opacity=1.0,
+            opacity=1.0, 
             connectgaps=False, 
             name=line_data['name'], 
             customdata=cd,
@@ -1130,40 +1096,30 @@ def execute_single_route_pipeline(parquet_path, selected_route, selected_dir, s2
     fig_B.add_trace(sched_trace)
     
     common_layout = dict(
-        height=1000, # Expanded vertical height to prevent overlaps in tick marks
-        yaxis_title="<b>Official Track Distance (km) & Stops [On-Time Reliability %]</b>",
-        xaxis_title="<b>Relative Time (Minutes)</b>",
+        height=900, 
+        yaxis_title="Official Track Distance (km) & Stops [On-Time Reliability %]",
+        xaxis_title="Relative Time (Minutes)",
         template="plotly_white", 
-        margin=dict(r=260, t=70, b=50),
-        xaxis=dict(
-            automargin=True,
-            tickfont=dict(size=14, color="#000000") # Forced dark and readable tick markers
-        ),
+        margin=dict(r=260, t=70, b=50), 
+        xaxis=dict(automargin=True),
         yaxis=dict(
             automargin=True, 
             tickmode='array', 
             tickvals=raw_data['st_filtered']['shape_dist_traveled'], 
-            ticktext=y_tick_texts,
-            tickfont=dict(size=13, color="#000000") # High contrast stops listing
+            ticktext=y_tick_texts
         ),
         legend=dict(
-            title="<b>Trips (Double-Click to Isolate)</b>",
+            title="Trips (Double-Click to Isolate)",
             x=1.0, 
             xanchor="left",
             y=1.0,
-            yanchor="top",
-            font=dict(size=13, color="#000000")
-        ),
-        font=dict(
-            family="Arial, Helvetica, sans-serif", # Standardized font family for official reports
-            size=14,
-            color="#000000"
+            yanchor="top"
         ),
         dragmode="zoom"  # Standard zoom-box selected initially
     )
     
-    fig_A.update_layout(**common_layout, title=dict(text=f"<b>{t_str} — Density</b>", font=dict(size=18, color="#000000")), violinmode='overlay', boxmode='overlay')
-    fig_B.update_layout(**common_layout, title=dict(text=f"<b>{t_str} — Time-Distance</b>", font=dict(size=18, color="#000000")), hovermode='closest')
+    fig_A.update_layout(**common_layout, title=f"{t_str} — Density", violinmode='overlay', boxmode='overlay')
+    fig_B.update_layout(**common_layout, title=f"{t_str} — Time-Distance", hovermode='closest')
 
     st.session_state.analysis_results = {
         'is_multi': False, 
@@ -1323,6 +1279,7 @@ def render_filter_panel(available_routes, parquet_path, trips, stop_times, stops
         st.subheader("1. Route Selection")
         adv_mode = st.toggle("Advanced: Route-Level Analysis", key="adv_mode", on_change=reset_signatures)
         #Advanced: Route-Level Analysis used to be called Multi-Level Analysis
+        
         if adv_mode:
             all_options = get_all_route_directions(trips, available_routes)
             if "multi_routes" not in st.session_state: st.session_state.multi_routes = all_options[:2]
@@ -1592,7 +1549,7 @@ def render_insights_panel(raw_pipeline_data, analysis_results):
         st.info(cliff_text)
 
 # ==============================================================================
-# 6.4. ANALYTICS CHART BUILDERS (STYLING MODIFIED FOR SCREENSHOT LEGIBILITY)
+# 6.4. ANALYTICS CHART BUILDERS
 # ==============================================================================
 def build_dow_chart(trip_stats):
     fig = go.Figure()
@@ -1602,26 +1559,19 @@ def build_dow_chart(trip_stats):
         if len(delays) < 3: continue
         fig.add_trace(go.Box(
             y=delays, name=DOW_LABELS[dow], boxpoints='outliers',
-            marker=dict(size=8, opacity=0.8), line=dict(color=TTC_RED, width=2.0),
+            marker=dict(size=6, opacity=0.7), line=dict(color=TTC_RED),
             fillcolor='rgba(218,37,29,0.15)', showlegend=False
         ))
     fig.add_trace(go.Scatter(
         x=[DOW_LABELS[d] for d in sorted(set(valid_dows))], y=[0]*len(valid_dows), mode='lines',
-        line=dict(dash='dash', color='#555555', width=1.5),
+        line=dict(dash='dash', color='#555555', width=1.2),
         showlegend=False, hoverinfo='skip'
     ))
     fig.update_layout(
-        title=dict(text="<b>Per-Trip Mean Delay by Day of Week</b>", font=dict(size=20, family="Arial, sans-serif", color="#000000")),
-        xaxis=dict(
-            title=dict(text="<b>Day of Week</b>", font=dict(size=16, family="Arial, sans-serif", color="#000000")),
-            tickfont=dict(size=14, family="Arial, sans-serif", color="#000000")
-        ),
-        yaxis=dict(
-            title=dict(text="<b>Mean Trip Delay (min)</b>", font=dict(size=16, family="Arial, sans-serif", color="#000000")),
-            tickfont=dict(size=14, family="Arial, sans-serif", color="#000000"),
-            zerolinecolor='#AAAAAA', zerolinewidth=1.5
-        ),
-        template="plotly_white", yaxis_zeroline=True
+        title="Per-Trip Mean Delay by Day of Week",
+        xaxis_title="Day of Week", yaxis_title="Mean Trip Delay (min)",
+        template="plotly_white", yaxis_zeroline=True,
+        yaxis=dict(zerolinecolor='#AAAAAA', zerolinewidth=1)
     )
     return fig
 
@@ -1638,32 +1588,25 @@ def build_date_trend_chart(trip_stats):
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=sorted_dates, y=daily_medians, mode='lines+markers',
-        marker=dict(size=12, color=TTC_RED, symbol='circle'), # High visibility trace size
-        line=dict(color=TTC_RED, width=3.0), name='Daily Median Deviation',
+        marker=dict(size=8, color=TTC_RED, symbol='circle'),
+        line=dict(color=TTC_RED, width=1.8), name='Daily Median Deviation',
         hovertemplate="Date: %{x}<br>Median Deviation: %{y:.1f} min<extra></extra>"
     ))
     if len(sorted_dates) >= 7:
         rolling = pd.Series(daily_medians).rolling(window=7, center=True).mean()
         fig.add_trace(go.Scatter(
             x=sorted_dates, y=rolling, mode='lines',
-            line=dict(dash='dot', color='#0072B2', width=2.5),
+            line=dict(dash='dot', color='#0072B2', width=1.5),
             name='7-Day Rolling Median'
         ))
     fig.add_trace(go.Scatter(
         x=sorted_dates, y=[0]*len(sorted_dates), mode='lines',
-        line=dict(dash='dash', color='#555555', width=1.5),
+        line=dict(dash='dash', color='#555555', width=1.2),
         showlegend=False, hoverinfo='skip'
     ))
     fig.update_layout(
-        title=dict(text="<b>Daily Median Deviation Over Analysis Period</b>", font=dict(size=20, family="Arial, sans-serif", color="#000000")),
-        xaxis=dict(
-            title=dict(text="<b>Operating Date</b>", font=dict(size=16, family="Arial, sans-serif", color="#000000")),
-            tickfont=dict(size=14, family="Arial, sans-serif", color="#000000")
-        ),
-        yaxis=dict(
-            title=dict(text="<b>Median Deviation (min)</b>", font=dict(size=16, family="Arial, sans-serif", color="#000000")),
-            tickfont=dict(size=14, family="Arial, sans-serif", color="#000000")
-        ),
+        title="Daily Median Deviation Over Analysis Period",
+        xaxis_title="Operating Date", yaxis_title="Median Deviation (min)",
         template="plotly_white"
     )
     return fig
@@ -1679,7 +1622,7 @@ def build_departure_scatter(trip_stats):
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=hours, y=delays, mode='markers',
-        marker=dict(size=12, color=TTC_RED, symbol='circle', opacity=0.75, line=dict(width=1.0, color='#FFFFFF')),
+        marker=dict(size=10, color=TTC_RED, symbol='circle', opacity=0.65, line=dict(width=0.8, color='#FFFFFF')),
         name='Individual Trips', customdata=dates,
         hovertemplate="Departure: %{x:.1f}h<br>Mean Delay: %{y:.1f} min<br>Date: %{customdata}<extra></extra>"
     ))
@@ -1688,24 +1631,17 @@ def build_departure_scatter(trip_stats):
         x_line = np.linspace(min(hours), max(hours), 200)
         fig.add_trace(go.Scatter(
             x=x_line, y=np.polyval(coeffs, x_line), mode='lines',
-            line=dict(dash='dot', color='#0072B2', width=3.0),
+            line=dict(dash='dot', color='#0072B2', width=1.8),
             name='Linear Trend', showlegend=True
         ))
     fig.add_trace(go.Scatter(
         x=[min(hours), max(hours)] if hours else [0, 24], y=[0, 0], mode='lines',
-        line=dict(dash='dash', color='#555555', width=1.5),
+        line=dict(dash='dash', color='#555555', width=1.2),
         showlegend=False, hoverinfo='skip'
     ))
     fig.update_layout(
-        title=dict(text="<b>Per-Trip Mean Delay vs Departure Hour</b>", font=dict(size=20, family="Arial, sans-serif", color="#000000")),
-        xaxis=dict(
-            title=dict(text="<b>Trip Departure Hour (0–24)</b>", font=dict(size=16, family="Arial, sans-serif", color="#000000")),
-            tickfont=dict(size=14, family="Arial, sans-serif", color="#000000")
-        ),
-        yaxis=dict(
-            title=dict(text="<b>Mean Delay (min)</b>", font=dict(size=16, family="Arial, sans-serif", color="#000000")),
-            tickfont=dict(size=14, family="Arial, sans-serif", color="#000000")
-        ),
+        title="Per-Trip Mean Delay vs Departure Hour",
+        xaxis_title="Trip Departure Hour (0–24)", yaxis_title="Mean Delay (min)",
         template="plotly_white"
     )
     return fig
@@ -1753,25 +1689,13 @@ def build_stop_time_heatmap(trip_stats):
     fig = go.Figure(data=go.Heatmap(
         z=matrix, x=stop_labels, y=bucket_labels,
         colorscale='RdBu_r', zmid=0,
-        colorbar=dict(
-            title=dict(
-                text="<b>Deviation (min)</b>",
-                font=dict(size=14, family="Arial, sans-serif", color="#000000")
-            ),
-            ticksuffix=" min"
-        ),
+        colorbar=dict(title="Deviation (min)", ticksuffix=" min"),
         hovertemplate="Stop: %{x}<br>Period: %{y}<br>Median Deviation: %{z:.1f} min<extra></extra>"
     ))
     fig.update_layout(
-        title=dict(text="<b>Median Deviation by Stop and Time of Day</b>", font=dict(size=20, family="Arial, sans-serif", color="#000000")),
-        xaxis=dict(
-            tickangle=45, automargin=True,
-            tickfont=dict(size=12, family="Arial, sans-serif", color="#000000")
-        ),
-        yaxis=dict(
-            tickfont=dict(size=13, family="Arial, sans-serif", color="#000000")
-        ),
-        height=max(450, 150 + len(used_buckets) * 80),
+        title="Median Deviation by Stop and Time of Day",
+        xaxis=dict(tickangle=45, automargin=True),
+        height=max(380, 120 + len(used_buckets) * 70),
         template="plotly_white"
     )
     return fig
@@ -1814,25 +1738,13 @@ def build_stop_dow_heatmap(trip_stats):
     fig = go.Figure(data=go.Heatmap(
         z=matrix, x=stop_labels, y=row_labels,
         colorscale='RdBu_r', zmid=0,
-        colorbar=dict(
-            title=dict(
-                text="<b>Deviation (min)</b>",
-                font=dict(size=14, family="Arial, sans-serif", color="#000000")
-            ),
-            ticksuffix=" min"
-        ),
+        colorbar=dict(title="Deviation (min)", ticksuffix=" min"),
         hovertemplate="Stop: %{x}<br>Day: %{y}<br>Median Deviation: %{z:.1f} min<extra></extra>"
     ))
     fig.update_layout(
-        title=dict(text="<b>Median Deviation by Stop and Day of Week</b>", font=dict(size=20, family="Arial, sans-serif", color="#000000")),
-        xaxis=dict(
-            tickangle=45, automargin=True,
-            tickfont=dict(size=12, family="Arial, sans-serif", color="#000000")
-        ),
-        yaxis=dict(
-            tickfont=dict(size=13, family="Arial, sans-serif", color="#000000")
-        ),
-        height=max(450, 150 + len(used_dows) * 80),
+        title="Median Deviation by Stop and Day of Week",
+        xaxis=dict(tickangle=45, automargin=True),
+        height=max(380, 120 + len(used_dows) * 70),
         template="plotly_white"
     )
     return fig
@@ -1851,26 +1763,19 @@ def build_delay_variance_chart(trip_stats):
             used_stops.append(label)
             fig.add_trace(go.Box(
                 y=y_vals, name=label, boxpoints='outliers',
-                marker=dict(size=6, color=TTC_RED, opacity=0.75),
-                line=dict(color=TTC_RED, width=1.5), fillcolor='rgba(218,37,29,0.15)',
+                marker=dict(size=5, color=TTC_RED, opacity=0.6),
+                line=dict(color=TTC_RED), fillcolor='rgba(218,37,29,0.15)',
                 showlegend=False,
                 hovertemplate=f"<b>{full_name}</b><br>Delay: %{{y:.1f}} min<extra></extra>"
             ))
-    fig.add_hline(y=0, line=dict(dash='dash', color='#555555', width=1.5))
+    fig.add_hline(y=0, line=dict(dash='dash', color='#AAAAAA', width=1))
     fig.update_layout(
-        title=dict(text="<b>Delay Distribution by Stop (Box-and-Whisker)</b>", font=dict(size=20, family="Arial, sans-serif", color="#000000")),
-        xaxis=dict(
-            tickangle=45, automargin=True,
-            tickfont=dict(size=11, family="Arial, sans-serif", color="#000000")
-        ),
-        yaxis=dict(
-            title=dict(text="<b>Delay from Schedule (min)</b>", font=dict(size=16, family="Arial, sans-serif", color="#000000")),
-            tickfont=dict(size=14, family="Arial, sans-serif", color="#000000"),
-            zerolinecolor='#AAAAAA', zerolinewidth=1.5
-        ),
-        yaxis_zeroline=True,
+        title="Delay Distribution by Stop (Box-and-Whisker)",
+        xaxis=dict(tickangle=45, automargin=True),
+        yaxis_title="Delay from Schedule (min)",
+        yaxis_zeroline=True, yaxis=dict(zerolinecolor='#AAAAAA', zerolinewidth=1),
         template="plotly_white",
-        height=max(550, 400 + len(used_stops) * 10)
+        height=max(450, 350 + len(used_stops) * 8)
     )
     return fig
 
@@ -1902,10 +1807,10 @@ def build_equity_scatter(stops_df, equity_gdf, equity_field, metric_label):
             x=route_data[equity_field], y=route_data['reliability'],
             mode='markers', name=legend_name,
             marker=dict(
-                size=15, # Increased scatter dot size for screenshot output readability
+                size=12, 
                 color=color, 
                 symbol="circle", 
-                opacity=0.85, 
+                opacity=0.80, 
                 line=dict(width=1.0, color='#FFFFFF')
             ),
             text=route_data['stop_name'] + ' — ' + route_data['area_name'].fillna('Outside boundary'),
@@ -1920,28 +1825,15 @@ def build_equity_scatter(stops_df, equity_gdf, equity_field, metric_label):
         x_line = np.linspace(x_all[mask].min(), x_all[mask].max(), 200)
         fig.add_trace(go.Scatter(
             x=x_line, y=np.polyval(coeffs, x_line), mode='lines',
-            line=dict(dash='dot', color='#111111', width=2.5), # Solidified regression line width
+            line=dict(dash='dot', color='#2C3E50', width=1.5),
             name='Overall Trend', showlegend=True, hoverinfo='skip'
         ))
 
     fig.update_layout(
-        title=dict(text=f"<b>Stop Reliability vs {metric_label}  —  N = {n_joined} of {n_total} stops</b>", font=dict(size=20, family="Arial, sans-serif", color="#000000")),
-        xaxis=dict(
-            title=dict(text=f"<b>{metric_label}</b>", font=dict(size=16, family="Arial, sans-serif", color="#000000")),
-            tickfont=dict(size=14, family="Arial, sans-serif", color="#000000")
-        ),
-        yaxis=dict(
-            title=dict(text="<b>On-Time Reliability (%)</b>", font=dict(size=16, family="Arial, sans-serif", color="#000000")),
-            tickfont=dict(size=14, family="Arial, sans-serif", color="#000000"),
-            range=[0, 100]
-        ),
-        template="plotly_white",
-        legend=dict(
-            title=dict(text="<b>Route</b>", font=dict(size=14, family="Arial, sans-serif", color="#000000")),
-            font=dict(size=13, family="Arial, sans-serif", color="#000000"),
-            x=1.02, xanchor='left'
-        ),
-        font=dict(family="Arial, sans-serif")
+        title=f"Stop Reliability vs {metric_label}  —  N = {n_joined} of {n_total} stops",
+        xaxis_title=metric_label, yaxis_title="On-Time Reliability (%)",
+        yaxis=dict(range=[0, 100]), template="plotly_white",
+        legend=dict(title="Route", x=1.02, xanchor='left')
     )
     return fig
 
@@ -2209,7 +2101,7 @@ with tab_map:
             
             equity_gdf = load_equity_data()
             
-            # Simplify the hidden census boundaries before rendering to prevent memory crashes
+            # ✅ NEW: Simplify the hidden census boundaries before rendering to prevent memory crashes
             display_equity = equity_gdf.copy()
             if not display_equity.empty and 'geometry' in display_equity.columns:
                 display_equity['geometry'] = display_equity['geometry'].simplify(0.0005, preserve_topology=True)
@@ -2230,7 +2122,7 @@ with tab_map:
                     
             equity_config = generate_equity_kepler_config()
             
-            # Use the simplified 'display_equity' instead of the raw 'equity_gdf'
+            # ✅ CHANGED: Use the simplified 'display_equity' instead of the raw 'equity_gdf'
             data_dict = {"equity": display_equity}
             
             if t_stops is not None and t_segs is not None and not t_stops.empty and not t_segs.empty:
@@ -2255,7 +2147,7 @@ with tab_map:
             keplergl_static(equity_map, center_map=True)
 
             # -------------------------------------------------------------------------
-            # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR CENSUS NEIGHBOURHOOD  EQUITY DATA
+            # ADDITIVE ACCESSIBLE FALLBACK VIEW FOR CENSUS NEIGHBOURHOOD EQUITY DATA
             # -------------------------------------------------------------------------
             if equity_gdf is not None and not equity_gdf.empty:
                 st.markdown("<br>", unsafe_allow_html=True)
@@ -2311,7 +2203,7 @@ with tab_charts:
                 st.plotly_chart(
                     st.session_state.analysis_results['fig_B'],
                     use_container_width=True,
-                    height=1000, # Matched common layout adjustments
+                    height=900,
                     config=PLOTLY_CONFIG,
                     key="fig_b_chart"
                 )
@@ -2368,7 +2260,7 @@ with tab_charts:
                 st.warning("⚠️ **Charts Disabled.** Detailed density plots are only available when analyzing a single route.")
             else:
                 st.markdown(f"**Configuration:** {st.session_state.raw_pipeline_data['title_info']}")
-                st.plotly_chart(st.session_state.analysis_results['fig_A'], use_container_width=True, height=1000, config=PLOTLY_CONFIG, key="fig_a_chart")
+                st.plotly_chart(st.session_state.analysis_results['fig_A'], use_container_width=True, height=900, config=PLOTLY_CONFIG, key="fig_a_chart")
 
         with tab_analytics:
             has_analysis = st.session_state.analysis_results is not None
